@@ -111,9 +111,24 @@ class ClaimOrchestrator:
                 },
             )
 
-            state = await get_graph().ainvoke(state)
+            result = await get_graph().ainvoke(state)
+
+            # LangGraph returns AddableValuesDict — convert back to ClaimState
+            # so all downstream code (webhook.py etc.) can use dot notation safely
+            if not isinstance(result, ClaimState):
+                state = ClaimState(**{
+                    k: v for k, v in result.items()
+                    if k in ClaimState.__dataclass_fields__
+                })
+            else:
+                state = result
+
             state.execution_completed = True
-            logger.info("orchestration_completed", extra={"claim_id": state.claim_id, "lane": state.routing_lane})
+
+            logger.info(
+                "orchestration_completed",
+                extra={"claim_id": state.claim_id, "lane": state.routing_lane},
+            )
 
         except Exception as e:
             logger.exception("orchestration_failed")
