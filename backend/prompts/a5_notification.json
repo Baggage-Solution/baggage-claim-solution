@@ -1,0 +1,4 @@
+{
+  "lane1_message": "Great news! Your baggage damage claim has been approved.\n\nClaim ID: {claim_id}\nCompensation: ${compensation} USD\nVoucher code: {voucher_code}\n\nPresent this voucher code at any airline service desk or use it online at our website. Valid for 12 months.",
+  "lane2_message": "Your baggage damage claim has been submitted for review by our team.\n\nClaim reference: {claim_id}\nExpected response: within 24 hours\n\nOur team will contact you at the email address on your booking. Thank you for your patience."
+}

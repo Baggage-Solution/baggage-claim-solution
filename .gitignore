@@ -1,0 +1,52 @@
+# --- Environment Variables & Secrets (CRITICAL) ---
+.env
+.env.local
+.env.*
+!.env.example
+configs/secrets.yaml
+**/secrets.py
+
+# --- Python / Environment ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.python-version
+.pytest_cache/
+.mypy_cache/
+
+# --- IDE & Editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# --- Infrastructure & Docker ---
+.terraform/
+*.tfstate
+*.tfstate.*
+.docker/
+docker-compose.override.yml
+
+# --- Local data & uploads ---
+data/
+*.db
+*.sqlite3
+*.log
+
+# --- Frontend build ---
+frontend/dist/
+frontend/node_modules/
+node_modules/
+
+# --- Test fixtures (real images, not synthetic) ---
+tests/fixtures/real/
+
+# --- Documentation / Temp ---
+site/
+temp/
+tmp/

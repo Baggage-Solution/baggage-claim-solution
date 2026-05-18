@@ -1,0 +1,3 @@
+{
+  "routing_summary": "You are reviewing a baggage damage claim. Given the following claim data, provide a one-sentence plain-language summary suitable for a staff agent dashboard.\n\nClaim data:\n- Damage types: {damage_types}\n- Severity score: {severity_score}/1.0\n- Brand: {brand} (luxury: {is_luxury})\n- Estimated compensation: ${compensation_estimate} USD\n- Fraud score: {fraud_score}/1.0\n- Fraud flags: {fraud_flags}\n\nOutput only the summary sentence."
+}

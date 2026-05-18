@@ -1,0 +1,9 @@
+# Place test images here — organised by type:
+#   damaged/      — damaged luggage photos (10-20 images)
+#   tags/         — bag tag / label photos (5-10 images)
+#   boarding_passes/ — boarding pass photos for OCR testing (5 images)
+#   luxury/       — luxury brand bag photos for brand detection (5-10 images)
+#   undamaged/    — control cases (5 images)
+#
+# Sources: Google Images, Unsplash (https://unsplash.com), Pexels (https://pexels.com)
+# Do NOT commit real passenger photos. All fixtures must be TEST DATA ONLY.
