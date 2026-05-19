@@ -17,7 +17,9 @@ class ConfigurationError(AppError):
 
 
 class CircuitOpenError(AppError):
-    def __init__(self, message: str = "Provider circuit is open. Please try again shortly."):
+    def __init__(
+        self, message: str = "Provider circuit is open. Please try again shortly."
+    ):
         super().__init__(message, code="CIRCUIT_OPEN", status_code=503)
 
 
@@ -31,5 +33,7 @@ class ClaimValidationError(AppError):
 
 
 class OCRConfidenceLowError(AppError):
-    def __init__(self, message: str = "OCR confidence too low — please retake the bag tag photo."):
+    def __init__(
+        self, message: str = "OCR confidence too low — please retake the bag tag photo."
+    ):
         super().__init__(message, code="OCR_LOW_CONFIDENCE", status_code=422)

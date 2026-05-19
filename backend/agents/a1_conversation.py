@@ -28,11 +28,15 @@ class A1ConversationAgent(BaseAgent):
     """
 
     def __init__(self, llm) -> None:
-        super().__init__(name="a1_conversation", description="Passenger conversation agent")
+        super().__init__(
+            name="a1_conversation", description="Passenger conversation agent"
+        )
         self._llm = llm  # LLMProvider instance
 
     async def handle(self, state: ClaimState, tasks: List[str]) -> ClaimState:
-        logger.info("a1_started", extra={"component": "A1", "step": state.conversation_step})
+        logger.info(
+            "a1_started", extra={"component": "A1", "step": state.conversation_step}
+        )
 
         try:
             # TODO (T-008): implement conversation logic
@@ -44,7 +48,9 @@ class A1ConversationAgent(BaseAgent):
             # 5. Advance state.conversation_step to next step if appropriate
             # 6. Set state.re_request_tag = True if A3 flagged low confidence
 
-            state.a1_response = "[A1 stub] Hello! Please describe and photograph the damage."
+            state.a1_response = (
+                "[A1 stub] Hello! Please describe and photograph the damage."
+            )
             state.add_debug("a1_step", state.conversation_step)
 
         except Exception as exc:

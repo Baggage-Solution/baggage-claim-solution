@@ -8,7 +8,7 @@ from typing import List, Optional
 @dataclass
 class DamageResult:
     damage_types: List[str] = field(default_factory=list)
-    severity_score: float = 0.0       # 0.0 (cosmetic) to 1.0 (destroyed)
+    severity_score: float = 0.0  # 0.0 (cosmetic) to 1.0 (destroyed)
     confidence: float = 0.0
     raw_description: str = ""
 

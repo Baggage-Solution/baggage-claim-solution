@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import logging
 
-from backend.vision_provider.base import BrandResult, DamageResult, VisionProvider
+from backend.vision_provider.base import (BrandResult, DamageResult,
+                                          VisionProvider)
 
 logger = logging.getLogger(__name__)
 
-LUXURY_BRANDS = {"rimowa", "louis vuitton", "tumi", "brics", "zero halliburton", "globe-trotter"}
+LUXURY_BRANDS = {
+    "rimowa",
+    "louis vuitton",
+    "tumi",
+    "brics",
+    "zero halliburton",
+    "globe-trotter",
+}
 
 
 class GeminiVisionProvider(VisionProvider):
@@ -20,6 +28,7 @@ class GeminiVisionProvider(VisionProvider):
 
     def __init__(self, api_key: str, model: str = "gemini-1.5-flash") -> None:
         import google.generativeai as genai
+
         genai.configure(api_key=api_key)
         self._model = genai.GenerativeModel(model)
         self._model_name = model

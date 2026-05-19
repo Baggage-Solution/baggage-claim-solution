@@ -15,6 +15,7 @@ class GeminiOCRProvider(OCRProvider):
 
     def __init__(self, api_key: str, model: str = "gemini-1.5-flash") -> None:
         import google.generativeai as genai
+
         genai.configure(api_key=api_key)
         self._model = genai.GenerativeModel(model)
 

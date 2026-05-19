@@ -50,7 +50,7 @@ class A3OCRAgent(BaseAgent):
             #      state.re_request_tag = True (A1 will ask passenger to retake)
             # 5. Log low-confidence cases for monitoring
 
-            state.pnr = "ABC123"        # stub
+            state.pnr = "ABC123"  # stub
             state.flight_number = "AI202"
             state.bag_id = "1234567890"
             state.ocr_confidence = 0.92
@@ -58,7 +58,9 @@ class A3OCRAgent(BaseAgent):
 
             if state.ocr_confidence < OCR_CONFIDENCE_THRESHOLD:
                 state.re_request_tag = True
-                logger.info("a3_low_confidence", extra={"confidence": state.ocr_confidence})
+                logger.info(
+                    "a3_low_confidence", extra={"confidence": state.ocr_confidence}
+                )
 
         except Exception as exc:
             logger.exception("a3_failed")

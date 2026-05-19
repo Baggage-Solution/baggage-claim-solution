@@ -34,7 +34,9 @@ class A4DecisionAgent(BaseAgent):
     """
 
     def __init__(self, db) -> None:
-        super().__init__(name="a4_decision", description="Fraud check and routing decision engine")
+        super().__init__(
+            name="a4_decision", description="Fraud check and routing decision engine"
+        )
         self._db = db  # DBProvider instance
 
     async def handle(self, state: ClaimState, tasks: List[str]) -> ClaimState:
@@ -80,6 +82,10 @@ class A4DecisionAgent(BaseAgent):
 
         logger.info(
             "a4_completed",
-            extra={"component": "A4", "claim_id": state.claim_id, "lane": state.routing_lane},
+            extra={
+                "component": "A4",
+                "claim_id": state.claim_id,
+                "lane": state.routing_lane,
+            },
         )
         return state

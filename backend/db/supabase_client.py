@@ -36,13 +36,16 @@ class SupabaseDBProvider(DBProvider):
 
     def __init__(self, url: str, service_role_key: str) -> None:
         from supabase import create_client
+
         self._client = create_client(url, service_role_key)
 
     async def save_claim(self, claim_data: Dict[str, Any]) -> str:
         # TODO (T-014):
         # response = self._client.table("claims").insert(claim_data).execute()
         # return response.data[0]["id"]
-        logger.info("supabase_save_claim_stub", extra={"claim_id": claim_data.get("id")})
+        logger.info(
+            "supabase_save_claim_stub", extra={"claim_id": claim_data.get("id")}
+        )
         return claim_data.get("id", "")
 
     async def get_claim(self, claim_id: str) -> Optional[Dict[str, Any]]:
@@ -54,7 +57,10 @@ class SupabaseDBProvider(DBProvider):
     async def update_claim_status(self, claim_id: str, status: str) -> None:
         # TODO (T-014 + T-017):
         # self._client.table("claims").update({"status": status}).eq("id", claim_id).execute()
-        logger.info("supabase_update_status_stub", extra={"claim_id": claim_id, "status": status})
+        logger.info(
+            "supabase_update_status_stub",
+            extra={"claim_id": claim_id, "status": status},
+        )
 
     async def get_claim_count(self, pnr: str, days: int = 30) -> int:
         # TODO (T-012 + T-014):

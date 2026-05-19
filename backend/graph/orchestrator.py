@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 
 from backend.graph.state import ClaimState
 
@@ -24,25 +24,30 @@ def _build_graph() -> StateGraph:
     async def a1_node(state: ClaimState) -> ClaimState:
         from backend.agents.a1_conversation import A1ConversationAgent
         from backend.dependencies import provide_llm
+
         return await A1ConversationAgent(llm=provide_llm()).handle(state, [])
 
     async def a2_node(state: ClaimState) -> ClaimState:
         from backend.agents.a2_vision import A2VisionAgent
         from backend.dependencies import provide_vision
+
         return await A2VisionAgent(vision=provide_vision()).handle(state, [])
 
     async def a3_node(state: ClaimState) -> ClaimState:
         from backend.agents.a3_ocr import A3OCRAgent
         from backend.dependencies import provide_ocr
+
         return await A3OCRAgent(ocr=provide_ocr()).handle(state, [])
 
     async def a4_node(state: ClaimState) -> ClaimState:
         from backend.agents.a4_decision import A4DecisionAgent
         from backend.dependencies import provide_db
+
         return await A4DecisionAgent(db=provide_db()).handle(state, [])
 
     async def a5_node(state: ClaimState) -> ClaimState:
         from backend.agents.a5_notification import A5NotificationAgent
+
         return await A5NotificationAgent().handle(state, [])
 
     def _route_after_a4(state: ClaimState) -> str:
@@ -116,10 +121,13 @@ class ClaimOrchestrator:
             # LangGraph returns AddableValuesDict — convert back to ClaimState
             # so all downstream code (webhook.py etc.) can use dot notation safely
             if not isinstance(result, ClaimState):
-                state = ClaimState(**{
-                    k: v for k, v in result.items()
-                    if k in ClaimState.__dataclass_fields__
-                })
+                state = ClaimState(
+                    **{
+                        k: v
+                        for k, v in result.items()
+                        if k in ClaimState.__dataclass_fields__
+                    }
+                )
             else:
                 state = result
 
