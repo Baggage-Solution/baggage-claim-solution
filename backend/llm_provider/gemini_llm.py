@@ -14,8 +14,11 @@ class GeminiLLMProvider(LLMProvider):
     Future swap: set LLM_PROVIDER=claude → claude_llm.py, or LLM_PROVIDER=ollama → ollama_llm.py.
     """
 
-    def __init__(self, api_key: str, model: str = "gemini-1.5-flash", temperature: float = 0.2) -> None:
+    def __init__(
+        self, api_key: str, model: str = "gemini-1.5-flash", temperature: float = 0.2
+    ) -> None:
         import google.generativeai as genai
+
         genai.configure(api_key=api_key)
         self._model = genai.GenerativeModel(model)
         self._default_temperature = temperature

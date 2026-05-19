@@ -28,7 +28,10 @@ class A2VisionAgent(BaseAgent):
         self._vision = vision  # VisionProvider instance
 
     async def handle(self, state: ClaimState, tasks: List[str]) -> ClaimState:
-        logger.info("a2_started", extra={"component": "A2", "image_count": len(state.image_paths)})
+        logger.info(
+            "a2_started",
+            extra={"component": "A2", "image_count": len(state.image_paths)},
+        )
 
         try:
             if not state.image_paths:
@@ -54,5 +57,7 @@ class A2VisionAgent(BaseAgent):
             logger.exception("a2_failed")
             state.set_error(f"A2 error: {exc}")
 
-        logger.info("a2_completed", extra={"component": "A2", "severity": state.severity_score})
+        logger.info(
+            "a2_completed", extra={"component": "A2", "severity": state.severity_score}
+        )
         return state

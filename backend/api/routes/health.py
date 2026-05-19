@@ -16,7 +16,9 @@ async def health_check(response: Response) -> Dict[str, Any]:
     settings = get_settings()
 
     gemini_configured = bool(settings.gemini_api_key)
-    supabase_configured = bool(settings.supabase_url and settings.supabase_service_role_key)
+    supabase_configured = bool(
+        settings.supabase_url and settings.supabase_service_role_key
+    )
 
     status = "ok" if (gemini_configured and supabase_configured) else "degraded"
     if status == "degraded":

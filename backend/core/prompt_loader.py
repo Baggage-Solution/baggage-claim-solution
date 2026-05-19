@@ -25,10 +25,14 @@ class PromptLoader:
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except FileNotFoundError:
-            logger.error("prompt_not_found", extra={"prompt_name": name, "path": str(path)})
+            logger.error(
+                "prompt_not_found", extra={"prompt_name": name, "path": str(path)}
+            )
             raise
         except json.JSONDecodeError:
-            logger.error("prompt_invalid_json", extra={"prompt_name": name, "path": str(path)})
+            logger.error(
+                "prompt_invalid_json", extra={"prompt_name": name, "path": str(path)}
+            )
             raise
 
     @staticmethod
