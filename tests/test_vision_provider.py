@@ -2,6 +2,7 @@
 Tests for GeminiVisionProvider — T-006
 Tests use mocked Gemini responses — no real API calls in test suite.
 """
+
 from __future__ import annotations
 
 import json
@@ -12,7 +13,6 @@ import pytest
 
 from backend.vision_provider.base import BrandResult, DamageResult
 from backend.vision_provider.gemini_vision import GeminiVisionProvider
-
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -38,15 +38,18 @@ def mock_gemini_response(data: dict) -> MagicMock:
 
 # ── analyze_damage tests ──────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_analyze_damage_returns_damage_result():
     """analyze_damage() returns a properly populated DamageResult."""
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "damage_types": ["cracked shell", "broken wheel"],
-        "severity_score": 0.6,
-        "confidence": 0.9,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "damage_types": ["cracked shell", "broken wheel"],
+            "severity_score": 0.6,
+            "confidence": 0.9,
+        }
+    )
 
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.analyze_damage("fake/path/damage.jpg")
@@ -61,11 +64,13 @@ async def test_analyze_damage_returns_damage_result():
 async def test_analyze_damage_no_damage():
     """analyze_damage() handles empty damage list correctly."""
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "damage_types": [],
-        "severity_score": 0.0,
-        "confidence": 0.95,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "damage_types": [],
+            "severity_score": 0.0,
+            "confidence": 0.95,
+        }
+    )
 
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.analyze_damage("fake/path/clean.jpg")
@@ -91,15 +96,18 @@ async def test_analyze_damage_strips_markdown_json():
 
 # ── classify_brand tests ──────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_classify_brand_luxury_detected():
     """classify_brand() correctly identifies a luxury brand."""
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "brand": "Rimowa",
-        "is_luxury": True,
-        "confidence": 0.95,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "brand": "Rimowa",
+            "is_luxury": True,
+            "confidence": 0.95,
+        }
+    )
 
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.classify_brand("fake/path/rimowa.jpg")
@@ -114,11 +122,13 @@ async def test_classify_brand_luxury_detected():
 async def test_classify_brand_standard_bag():
     """classify_brand() correctly identifies a non-luxury brand."""
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "brand": "Samsonite",
-        "is_luxury": False,
-        "confidence": 0.88,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "brand": "Samsonite",
+            "is_luxury": False,
+            "confidence": 0.88,
+        }
+    )
 
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.classify_brand("fake/path/samsonite.jpg")
@@ -134,27 +144,31 @@ async def test_classify_brand_luxury_set_override():
     even if Gemini says is_luxury=False.
     """
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "brand": "tumi",
-        "is_luxury": False,   # Gemini wrong — our set overrides
-        "confidence": 0.7,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "brand": "tumi",
+            "is_luxury": False,  # Gemini wrong — our set overrides
+            "confidence": 0.7,
+        }
+    )
 
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.classify_brand("fake/path/tumi.jpg")
 
-    assert result.is_luxury is True   # LUXURY_BRANDS set overrides Gemini
+    assert result.is_luxury is True  # LUXURY_BRANDS set overrides Gemini
 
 
 @pytest.mark.asyncio
 async def test_classify_brand_unknown():
     """classify_brand() handles unknown/unidentifiable brand."""
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "brand": None,
-        "is_luxury": False,
-        "confidence": 0.3,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "brand": None,
+            "is_luxury": False,
+            "confidence": 0.3,
+        }
+    )
 
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.classify_brand("fake/path/unknown.jpg")
