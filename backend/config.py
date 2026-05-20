@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # GEMINI  (POC — free tier)
     # =========================================================
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
-    gemini_model: str = Field(default="gemini-1.5-flash", alias="GEMINI_MODEL")
+    gemini_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL")
     gemini_vision_model: str = Field(
         default="gemini-1.5-flash", alias="GEMINI_VISION_MODEL"
     )
