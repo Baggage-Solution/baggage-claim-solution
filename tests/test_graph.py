@@ -36,6 +36,9 @@ async def test_orchestrator_smoke_no_images():
     Acceptance: execution_completed=True, error=None, a1_response set.
     """
     mock_llm = MagicMock()
+    mock_llm.chat = AsyncMock(
+        return_value="Hello! Please describe the damage to your bag."
+    )
     mock_vision = MagicMock()
     mock_ocr = MagicMock()
     mock_db = MagicMock()
@@ -67,6 +70,9 @@ async def test_orchestrator_session_continuity():
     multi-turn execution — no KeyError, no missing thread_id error.
     """
     mock_llm = MagicMock()
+    mock_llm.chat = AsyncMock(
+        return_value="Hello! Please describe the damage to your bag."
+    )
     mock_vision = MagicMock()
     mock_ocr = MagicMock()
     mock_db = MagicMock()
