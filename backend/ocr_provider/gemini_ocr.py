@@ -13,8 +13,8 @@ from backend.ocr_provider.base import OCRProvider, TagData
 logger = logging.getLogger(__name__)
 
 # ── Validation patterns from architecture doc ──────────────────────────────────
-PNR_PATTERN    = re.compile(r"^[A-Z0-9]{6}$")   # exactly 6 uppercase alphanumeric
-BAG_ID_PATTERN = re.compile(r"^\d{10}$")          # exactly 10 digits
+PNR_PATTERN = re.compile(r"^[A-Z0-9]{6}$")  # exactly 6 uppercase alphanumeric
+BAG_ID_PATTERN = re.compile(r"^\d{10}$")  # exactly 10 digits
 
 BAG_TAG_EXTRACTION_PROMPT = """You are an airline baggage handling system.
 Analyze this airline bag tag image carefully.
@@ -188,9 +188,9 @@ class GeminiOCRProvider(OCRProvider):
             # Normalise and validate each field
             raw_flight = parsed.get("flight_number")
             flight_number = raw_flight.strip().upper() if raw_flight else None
-            pnr          = self._validate_pnr(parsed.get("pnr"))
-            bag_id       = self._validate_bag_id(parsed.get("bag_id"))
-            confidence   = float(parsed.get("confidence", 0.0))
+            pnr = self._validate_pnr(parsed.get("pnr"))
+            bag_id = self._validate_bag_id(parsed.get("bag_id"))
+            confidence = float(parsed.get("confidence", 0.0))
 
             result = TagData(
                 flight_number=flight_number,

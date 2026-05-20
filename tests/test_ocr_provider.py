@@ -4,6 +4,7 @@ Tests for GeminiOCRProvider — T-007.
 All Gemini API calls are mocked — no real API calls, no API key needed.
 Follows the same structure as test_vision_provider.py (T-006).
 """
+
 from __future__ import annotations
 
 import json
@@ -15,13 +16,14 @@ import pytest
 from backend.ocr_provider.base import TagData
 from backend.ocr_provider.gemini_ocr import GeminiOCRProvider
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def make_provider() -> GeminiOCRProvider:
     """GeminiOCRProvider with a mocked Gemini model — no API key needed."""
-    with patch("google.generativeai.configure"), \
-         patch("google.generativeai.GenerativeModel") as mock_cls:
+    with patch("google.generativeai.configure"), patch(
+        "google.generativeai.GenerativeModel"
+    ) as mock_cls:
         provider = GeminiOCRProvider(api_key="test-key", model="gemini-2.5-flash")
         provider._model = mock_cls.return_value
     return provider
@@ -43,16 +45,19 @@ def mock_gemini_raw(text: str) -> MagicMock:
 
 # ── extract_bag_tag — success cases ──────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_extract_bag_tag_success():
     """All fields extracted and validated correctly from a clean bag tag."""
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "flight_number": "AI202",
-        "pnr": "ABC123",
-        "bag_id": "0572351234",
-        "confidence": 0.95,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "flight_number": "AI202",
+            "pnr": "ABC123",
+            "bag_id": "0572351234",
+            "confidence": 0.95,
+        }
+    )
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.extract_bag_tag("fake/tag.jpg")
 
@@ -83,12 +88,14 @@ async def test_extract_bag_tag_markdown_stripped():
 async def test_extract_bag_tag_lowercase_normalised():
     """Gemini returns lowercase flight/PNR → provider normalises to uppercase."""
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "flight_number": "ai202",
-        "pnr": "abc123",
-        "bag_id": "1234567890",
-        "confidence": 0.80,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "flight_number": "ai202",
+            "pnr": "abc123",
+            "bag_id": "1234567890",
+            "confidence": 0.80,
+        }
+    )
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.extract_bag_tag("fake/tag.jpg")
 
@@ -100,29 +107,36 @@ async def test_extract_bag_tag_lowercase_normalised():
 async def test_extract_bag_tag_low_confidence():
     """Blurry tag — confidence < 0.7 returned so A3 sets re_request_tag = True."""
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "flight_number": "AI202",
-        "pnr": "ABC123",
-        "bag_id": "0572351234",
-        "confidence": 0.45,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "flight_number": "AI202",
+            "pnr": "ABC123",
+            "bag_id": "0572351234",
+            "confidence": 0.45,
+        }
+    )
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.extract_bag_tag("fake/tag.jpg")
 
     assert result.confidence == 0.45
-    assert result.confidence < 0.7   # A3 checks this threshold
+    assert result.confidence < 0.7  # A3 checks this threshold
 
 
 # ── PNR validation ────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_invalid_pnr_too_short():
     """PNR with only 4 chars fails [A-Z0-9]{6} validation → None."""
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "flight_number": "AI202", "pnr": "AB12",
-        "bag_id": "1234567890", "confidence": 0.80,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "flight_number": "AI202",
+            "pnr": "AB12",
+            "bag_id": "1234567890",
+            "confidence": 0.80,
+        }
+    )
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.extract_bag_tag("fake/tag.jpg")
     assert result.pnr is None
@@ -132,10 +146,14 @@ async def test_invalid_pnr_too_short():
 async def test_invalid_pnr_special_characters():
     """PNR with hyphen fails validation → None."""
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "flight_number": "AI202", "pnr": "AB-123",
-        "bag_id": "1234567890", "confidence": 0.80,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "flight_number": "AI202",
+            "pnr": "AB-123",
+            "bag_id": "1234567890",
+            "confidence": 0.80,
+        }
+    )
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.extract_bag_tag("fake/tag.jpg")
     assert result.pnr is None
@@ -145,10 +163,14 @@ async def test_invalid_pnr_special_characters():
 async def test_null_pnr_from_gemini():
     """Gemini returns null PNR (unreadable tag) → None in TagData."""
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "flight_number": "AI202", "pnr": None,
-        "bag_id": "1234567890", "confidence": 0.50,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "flight_number": "AI202",
+            "pnr": None,
+            "bag_id": "1234567890",
+            "confidence": 0.50,
+        }
+    )
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.extract_bag_tag("fake/tag.jpg")
     assert result.pnr is None
@@ -156,14 +178,19 @@ async def test_null_pnr_from_gemini():
 
 # ── Bag ID validation ─────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_invalid_bag_id_too_short():
     """Bag ID with 9 digits fails \d{10} validation → None."""
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "flight_number": "AI202", "pnr": "ABC123",
-        "bag_id": "123456789", "confidence": 0.80,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "flight_number": "AI202",
+            "pnr": "ABC123",
+            "bag_id": "123456789",
+            "confidence": 0.80,
+        }
+    )
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.extract_bag_tag("fake/tag.jpg")
     assert result.bag_id is None
@@ -173,16 +200,21 @@ async def test_invalid_bag_id_too_short():
 async def test_invalid_bag_id_contains_letters():
     """Bag ID with letters fails validation → None."""
     provider = make_provider()
-    provider._model.generate_content.return_value = mock_gemini_response({
-        "flight_number": "AI202", "pnr": "ABC123",
-        "bag_id": "12345ABCDE", "confidence": 0.80,
-    })
+    provider._model.generate_content.return_value = mock_gemini_response(
+        {
+            "flight_number": "AI202",
+            "pnr": "ABC123",
+            "bag_id": "12345ABCDE",
+            "confidence": 0.80,
+        }
+    )
     with patch.object(provider, "_load_image", return_value=MagicMock()):
         result = await provider.extract_bag_tag("fake/tag.jpg")
     assert result.bag_id is None
 
 
 # ── Error handling ────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_file_not_found_raises():
