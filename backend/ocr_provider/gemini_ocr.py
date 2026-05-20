@@ -12,9 +12,13 @@ from backend.ocr_provider.base import OCRProvider, TagData
 
 logger = logging.getLogger(__name__)
 
-# ── Validation patterns from architecture doc ──────────────────────────────────
-PNR_PATTERN = re.compile(r"^[A-Z0-9]{6}$")  # exactly 6 uppercase alphanumeric
-BAG_ID_PATTERN = re.compile(r"^\d{10}$")  # exactly 10 digits
+# ── Validation patterns ────────────────────────────────────────────────────────
+# PNR: exactly 6 uppercase alphanumeric characters (IATA standard)
+PNR_PATTERN = re.compile(r"^[A-Z0-9]{6}$")
+
+# Bag ID: 10–12 digits (IATA standard is 10, but some tags print 12 with spaces stripped)
+# Real-world tags like "0452 30 674234" → stripped → "045230674234" (12 digits)
+BAG_ID_PATTERN = re.compile(r"^\d{10,12}$")
 
 BAG_TAG_EXTRACTION_PROMPT = """You are an airline baggage handling system.
 Analyze this airline bag tag image carefully.
@@ -23,14 +27,18 @@ Return ONLY a valid JSON object with exactly these fields:
 {
   "flight_number": "AI202",
   "pnr": "ABC123",
-  "bag_id": "0572351234",
+  "bag_id": "045230674234",
   "confidence": 0.95
 }
 
 Rules:
-- flight_number: string with the flight number (e.g. "AI202", "EK567"). null if not readable.
-- pnr: string with exactly 6 uppercase alphanumeric characters (e.g. "ABC123"). null if not readable.
-- bag_id: string with exactly 10 digits (baggage tag number, e.g. "0572351234"). null if not readable.
+- flight_number: string with the flight number including airline code (e.g. "AI202", "EK567", "TK1234").
+  null if not present or not readable. Note: airport codes (e.g. "SAW", "BOM") are NOT flight numbers.
+- pnr: string with exactly 6 uppercase alphanumeric characters (e.g. "ABC123").
+  null if not present or not readable. PNR is not always printed on bag tags.
+- bag_id: the baggage tag number as a CONTINUOUS STRING OF DIGITS ONLY.
+  Remove ALL spaces — e.g. "0452 30 674234" becomes "045230674234".
+  Typically 10–12 digits. null if not readable.
 - confidence: float 0.0–1.0 representing how clearly readable the tag is
   1.0 = perfectly clear, all fields readable
   0.7 = mostly readable, minor blur
@@ -136,22 +144,27 @@ class GeminiOCRProvider(OCRProvider):
 
     def _validate_bag_id(self, bag_id: Optional[str]) -> Optional[str]:
         """
-        Validate bag ID format: exactly 10 digits.
+        Validate bag ID format: 10–12 continuous digits.
+
+        Strips spaces before validation — real airline tags often print
+        the number with spaces (e.g. "0452 30 674234") but the underlying
+        IATA number is a continuous digit string.
 
         Args:
             bag_id: Raw bag ID string from Gemini response.
 
         Returns:
-            Bag ID string if valid, None otherwise.
+            Space-stripped digit string if valid (10–12 digits), None otherwise.
         """
         if not bag_id:
             return None
-        cleaned = str(bag_id).strip()
+        # Strip spaces — handles "0452 30 674234" → "045230674234"
+        cleaned = str(bag_id).strip().replace(" ", "")
         if BAG_ID_PATTERN.match(cleaned):
             return cleaned
         logger.warning(
             "gemini_ocr_invalid_bag_id",
-            extra={"bag_id": bag_id, "expected_pattern": r"\d{10}"},
+            extra={"bag_id": bag_id, "expected_pattern": r"\d{10,12}"},
         )
         return None
 
