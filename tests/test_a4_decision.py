@@ -3,6 +3,7 @@ Tests for A4DecisionAgent — T-012.
 All 5 routing scenarios from architecture doc.
 All DB calls are mocked — no real Supabase needed.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,8 +13,8 @@ import pytest
 from backend.agents.a4_decision import A4DecisionAgent, _generate_claim_id
 from backend.graph.state import ClaimState
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def make_db(claim_count: int = 0, hashes: list = None) -> MagicMock:
     """Create a mock DBProvider."""
@@ -48,13 +49,14 @@ def make_agent(claim_count: int = 0, hashes: list = None) -> A4DecisionAgent:
 
 # ── claim ID tests ────────────────────────────────────────────────────────────
 
+
 def test_generate_claim_id_format():
     """Claim ID matches CLM-YYYYMMDD-XXXX format."""
     claim_id = _generate_claim_id()
     parts = claim_id.split("-")
     assert parts[0] == "CLM"
-    assert len(parts[1]) == 8   # YYYYMMDD
-    assert len(parts[2]) == 4   # XXXX hex
+    assert len(parts[1]) == 8  # YYYYMMDD
+    assert len(parts[2]) == 4  # XXXX hex
 
 
 def test_generate_claim_id_unique():
@@ -63,6 +65,7 @@ def test_generate_claim_id_unique():
 
 
 # ── SCENARIO 1 — Standard bag, low value → Lane 1 ────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_scenario1_standard_bag_low_value_lane1():
@@ -87,6 +90,7 @@ async def test_scenario1_standard_bag_low_value_lane1():
 
 # ── SCENARIO 2 — High value → Lane 2 ─────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_scenario2_high_value_lane2():
     """
@@ -108,6 +112,7 @@ async def test_scenario2_high_value_lane2():
 
 # ── SCENARIO 3 — Luxury bag → Lane 2 ─────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_scenario3_luxury_bag_always_lane2():
     """
@@ -116,7 +121,7 @@ async def test_scenario3_luxury_bag_always_lane2():
     """
     agent = make_agent()
     state = make_state(
-        compensation_estimate_usd=40.0,   # low value — but luxury
+        compensation_estimate_usd=40.0,  # low value — but luxury
         is_luxury=True,
         brand_detected="Rimowa",
         fraud_score=0.0,
@@ -129,6 +134,7 @@ async def test_scenario3_luxury_bag_always_lane2():
 
 
 # ── SCENARIO 4 — pHash duplicate → Lane 2 ────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_scenario4_phash_duplicate_lane2():
@@ -143,7 +149,7 @@ async def test_scenario4_phash_duplicate_lane2():
     )
     # Pre-inject fraud state with score >= 0.5 to trigger Lane 2
     state.fraud_flags = ["phash_duplicate"]
-    state.fraud_score = 0.5     # ← was 0.4, needs to be >= 0.5
+    state.fraud_score = 0.5  # ← was 0.4, needs to be >= 0.5
 
     result = await agent.handle(state, [])
 
@@ -154,6 +160,7 @@ async def test_scenario4_phash_duplicate_lane2():
 
 
 # ── SCENARIO 5 — High frequency → Lane 2 ─────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_scenario5_high_frequency_lane2():
@@ -168,7 +175,7 @@ async def test_scenario5_high_frequency_lane2():
         pnr="FRAUD1",
     )
     # Pre-inject existing fraud score so frequency check pushes it over 0.5
-    state.fraud_score = 0.3     # ← frequency check adds 0.3 → total 0.6
+    state.fraud_score = 0.3  # ← frequency check adds 0.3 → total 0.6
 
     result = await agent.handle(state, [])
 
@@ -179,6 +186,7 @@ async def test_scenario5_high_frequency_lane2():
 
 
 # ── DB persistence tests ──────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_a4_saves_claim_to_db():
@@ -211,6 +219,7 @@ async def test_a4_sets_error_on_db_failure():
 
 # ── Luxury compensation multiplier test ───────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_a4_luxury_compensation_multiplier():
     """Luxury bags get 1.5x compensation multiplier applied by A4."""
@@ -222,7 +231,7 @@ async def test_a4_luxury_compensation_multiplier():
 
     result = await agent.handle(state, [])
 
-    assert result.final_compensation_usd == 120.0   # 80 × 1.5
+    assert result.final_compensation_usd == 120.0  # 80 × 1.5
 
 
 @pytest.mark.asyncio
