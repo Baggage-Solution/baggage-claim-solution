@@ -1,38 +1,36 @@
 import { useCallback, useRef, useState } from 'react'
 
 /**
- * useClaimFlow — manages the full 13-step baggage claim conversation.
+ * useClaimFlow — manages the full baggage claim conversation.
  *
- * Conversation steps (mirrors ClaimState.conversation_step on backend):
- *   greeting → damage_photos → tag_photo → confirm → result
+ * KEY DESIGN DECISIONS:
  *
- * Responsibilities:
- *   - Maintains message list, current step, pending image queue, session ID
- *   - Calls POST /upload for each photo, then POST /webhook with image paths
- *   - Surfaces claim result (Lane 1 voucher | Lane 2 under-review) to UI
- *   - Handles re_request_tag and re_request_damage retry prompts
+ * 1. conversation_step is sent to backend on every request.
+ *    LangGraph MemorySaver does not persist plain dataclass field values
+ *    between separate ainvoke() calls. The backend creates a fresh ClaimState
+ *    with step="greeting" each call unless we supply the current step.
+ *    Frontend tracks the step from each response and echoes it back.
  *
- * T-013 scope: full backend wiring, replacing all T-003 stubs in App.jsx.
+ * 2. allUploadedPaths accumulates every uploaded image path across the session.
+ *    At the "confirm" step the user sends only text ("yes"). A4 still needs
+ *    all image paths for fraud checks and routing. Resending the full set
+ *    on every webhook call guarantees A4 has everything it needs.
  */
 
 const BACKEND = 'http://localhost:8000'
 
-/** Generate a random session ID once per browser session */
 function makeSessionId() {
   return `sim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-/** Format current time as HH:MM for message timestamps */
 function nowTime() {
   return new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-/** Build a bot message object */
 function botMsg(text, extra = {}) {
   return { id: crypto.randomUUID(), sender: 'bot', text, timestamp: nowTime(), ...extra }
 }
 
-/** Build a user message object */
 function userMsg(text, extra = {}) {
   return { id: crypto.randomUUID(), sender: 'user', text, timestamp: nowTime(), ...extra }
 }
@@ -41,27 +39,23 @@ export function useClaimFlow() {
   const sessionId = useRef(makeSessionId())
   const claimIdRef = useRef(null)
   const conversationHistory = useRef([])
+  const allUploadedPaths = useRef([])   // accumulates ALL uploaded paths for this session
 
   const [messages, setMessages] = useState([
     botMsg(
       '👋 Hello! I\'m the ABC Airline baggage claim assistant. I\'m here to help you file a damage claim quickly — no queues, no paperwork.\n\nCould you please briefly describe what happened to your bag?',
     ),
   ])
-  const [step, setStep] = useState('greeting') // greeting | damage_photos | tag_photo | confirm | result
+  const [step, setStep] = useState('greeting')
   const [isLoading, setIsLoading] = useState(false)
-  const [claimResult, setClaimResult] = useState(null) // { lane, voucherCode, claimId }
-  const [pendingImages, setPendingImages] = useState([]) // File[] staged before send
+  const [claimResult, setClaimResult] = useState(null)
+  const [pendingImages, setPendingImages] = useState([])
   const [inputDisabled, setInputDisabled] = useState(false)
 
-  /** Append one or more messages to the chat */
   const appendMessages = useCallback((...msgs) => {
     setMessages((prev) => [...prev, ...msgs])
   }, [])
 
-  /**
-   * Upload a single File to /upload.
-   * Returns the server path string, or null on failure.
-   */
   const uploadFile = useCallback(async (file, photoType) => {
     const cid = claimIdRef.current || 'pending'
     const form = new FormData()
@@ -76,21 +70,29 @@ export function useClaimFlow() {
       const data = await res.json()
       return data.path
     } catch (err) {
-      console.error('[T-013] upload error:', err)
+      console.error('[useClaimFlow] upload error:', err)
       return null
     }
   }, [])
 
   /**
-   * Call POST /webhook with the current message + image paths.
-   * Returns the parsed WebhookResponse, or null on failure.
+   * callWebhook — sends message + full accumulated image paths + current step.
+   *
+   * Always sends:
+   *   - allUploadedPaths.current (full set, not just this turn's paths)
+   *   - step (current frontend step, echoed to backend to preserve conversation flow)
    */
-  const callWebhook = useCallback(async (message, imagePaths = []) => {
+  const callWebhook = useCallback(async (message, newImagePaths = []) => {
+    if (newImagePaths.length > 0) {
+      allUploadedPaths.current = [...allUploadedPaths.current, ...newImagePaths]
+    }
+
     const body = {
       session_id: sessionId.current,
       message,
-      image_paths: imagePaths,
+      image_paths: allUploadedPaths.current,
       conversation_history: conversationHistory.current,
+      conversation_step: step,   // ← echo current step to backend
     }
 
     try {
@@ -102,27 +104,20 @@ export function useClaimFlow() {
       if (!res.ok) throw new Error(`Webhook HTTP ${res.status}`)
       const data = await res.json()
 
-      // Keep rolling conversation history for multi-turn context
       conversationHistory.current = [
         ...conversationHistory.current,
         { role: 'user', content: message },
         { role: 'assistant', content: data.reply || '' },
       ]
 
-      // Persist claim_id once A4 sets it
       if (data.claim_id) claimIdRef.current = data.claim_id
-
       return data
     } catch (err) {
-      console.error('[T-013] webhook error:', err)
+      console.error('[useClaimFlow] webhook error:', err)
       return null
     }
-  }, [])
+  }, [step])   // step is a dependency — callWebhook reads it
 
-  /**
-   * handleSendText — user sends a plain text message.
-   * Called from App.jsx when user presses Send.
-   */
   const handleSendText = useCallback(
     async (text) => {
       if (!text.trim() || isLoading || inputDisabled) return
@@ -137,37 +132,24 @@ export function useClaimFlow() {
         appendMessages(botMsg('⚠️ Sorry, I could not reach the server. Please check your connection and try again.'))
         return
       }
-
-      // Handle backend error
       if (response.error) {
         appendMessages(botMsg(`⚠️ Something went wrong: ${response.error}`))
         return
       }
 
-      // Update step
       if (response.conversation_step) setStep(response.conversation_step)
-
-      // Show bot reply
       if (response.reply) appendMessages(botMsg(response.reply))
-
-      // Check for terminal result
       _handleResult(response)
     },
     [isLoading, inputDisabled, appendMessages, callWebhook],
   )
 
-  /**
-   * handleSendImages — user has staged photos and hits Send (with or without text).
-   * Uploads all staged images first, then calls /webhook with their paths.
-   */
   const handleSendImages = useCallback(
     async (captionText = '') => {
       if (pendingImages.length === 0 || isLoading) return
 
-      // Determine photo type based on current step
       const photoType = step === 'tag_photo' ? 'tag' : 'damage'
 
-      // Show user bubble with image previews immediately
       appendMessages(
         userMsg(captionText || `📸 ${pendingImages.length} photo${pendingImages.length > 1 ? 's' : ''} attached`, {
           imagePreviews: pendingImages.map((f) => ({ name: f.name, url: URL.createObjectURL(f) })),
@@ -177,10 +159,7 @@ export function useClaimFlow() {
       setIsLoading(true)
       setPendingImages([])
 
-      // Upload all files in parallel
-      const paths = await Promise.all(
-        pendingImages.map((file) => uploadFile(file, photoType)),
-      )
+      const paths = await Promise.all(pendingImages.map((file) => uploadFile(file, photoType)))
       const validPaths = paths.filter(Boolean)
 
       if (validPaths.length === 0) {
@@ -197,7 +176,6 @@ export function useClaimFlow() {
         appendMessages(botMsg('⚠️ Could not reach the server. Please try again.'))
         return
       }
-
       if (response.error) {
         appendMessages(botMsg(`⚠️ Error: ${response.error}`))
         return
@@ -205,39 +183,23 @@ export function useClaimFlow() {
 
       if (response.conversation_step) setStep(response.conversation_step)
       if (response.reply) appendMessages(botMsg(response.reply))
-
       _handleResult(response)
     },
     [pendingImages, isLoading, step, appendMessages, uploadFile, callWebhook],
   )
 
-  /**
-   * _handleResult — check response for final lane routing and update UI.
-   * Internal — not exposed to App.
-   */
   function _handleResult(response) {
     if (response.routing_lane === 1) {
-      setClaimResult({
-        lane: 1,
-        voucherCode: response.voucher_code,
-        claimId: response.claim_id,
-      })
+      setClaimResult({ lane: 1, voucherCode: response.voucher_code, claimId: response.claim_id })
       setInputDisabled(true)
       setStep('result')
     } else if (response.routing_lane === 2) {
-      setClaimResult({
-        lane: 2,
-        claimId: response.claim_id,
-      })
+      setClaimResult({ lane: 2, claimId: response.claim_id })
       setInputDisabled(true)
       setStep('result')
     }
   }
 
-  /**
-   * handleFileSelect — user picks files via the paperclip button.
-   * Stages them in pendingImages for preview; does NOT upload yet.
-   */
   const handleFileSelect = useCallback((e) => {
     const files = Array.from(e.target.files)
     if (files.length === 0) return
@@ -245,7 +207,6 @@ export function useClaimFlow() {
     e.target.value = ''
   }, [])
 
-  /** Remove a staged image by index */
   const removePendingImage = useCallback((idx) => {
     setPendingImages((prev) => prev.filter((_, i) => i !== idx))
   }, [])

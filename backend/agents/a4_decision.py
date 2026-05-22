@@ -216,6 +216,30 @@ class A4DecisionAgent(BaseAgent):
             },
         )
 
+        # ── Guard: only run if both damage AND tag images have been uploaded ────
+        # The orchestrator's conditional edge should prevent A4 from being called
+        # on text-only turns, but this guard is a belt-and-suspenders safety net.
+        # Without it, a blank-state A4 run would set routing_lane on every turn
+        # and cause A1._advance_step() to jump straight to "result".
+        damage_images = [p for p in state.image_paths if "tag" not in p.lower()]
+        tag_images = [p for p in state.image_paths if "tag" in p.lower()]
+
+        # Guard: only skip when images are present but the set is incomplete.
+        # An empty image_paths means A4 is being called directly (unit tests,
+        # or confirm step where orchestrator already validated both types exist).
+        # In that case, fall through and let A4 run on the state it has.
+        if state.image_paths and (not damage_images or not tag_images):
+            logger.info(
+                "a4_skipped",
+                extra={
+                    "reason": "incomplete_images",
+                    "damage_count": len(damage_images),
+                    "tag_count": len(tag_images),
+                    "session_id": state.session_id,
+                },
+            )
+            return state
+
         try:
             # Step 1 — Generate claim ID
             state.claim_id = _generate_claim_id()

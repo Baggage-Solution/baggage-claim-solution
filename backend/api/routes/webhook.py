@@ -116,6 +116,7 @@ async def webhook(
             passenger_message=payload.message,
             image_paths=payload.image_paths or [],
             conversation_history=payload.conversation_history or [],
+            conversation_step=payload.conversation_step or "greeting",
             request_id=req_id,
         )
 
@@ -177,7 +178,7 @@ async def upload_image(
             "session_id": session_id,
             "claim_id": claim_id,
             "photo_type": photo_type,
-            "filename": filename,
+            "upload_filename": filename,
         },
     )
 
