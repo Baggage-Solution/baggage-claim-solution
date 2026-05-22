@@ -29,9 +29,7 @@ class A5NotificationAgent(BaseAgent):
     """
 
     def __init__(self) -> None:
-        super().__init__(
-            name="a5_notification", description="Notification and HITL routing agent"
-        )
+        super().__init__(name="a5_notification", description="Notification and HITL routing agent")
 
     async def handle(self, state: ClaimState, tasks: List[str]) -> ClaimState:
         logger.info("a5_started", extra={"component": "A5", "lane": state.routing_lane})
@@ -48,10 +46,7 @@ class A5NotificationAgent(BaseAgent):
             logger.exception("a5_failed")
             state.set_error(f"A5 error: {exc}")
 
-        logger.info(
-            "a5_completed",
-            extra={"component": "A5", "notified": state.notification_sent},
-        )
+        logger.info("a5_completed", extra={"component": "A5", "notified": state.notification_sent})
         return state
 
     async def _handle_lane1(self, state: ClaimState) -> None:
@@ -64,10 +59,7 @@ class A5NotificationAgent(BaseAgent):
         # In production: POST to Meta Cloud API
         # msg = f"Your claim {state.claim_id} is approved! Voucher: {state.voucher_code}"
 
-        logger.info(
-            "a5_lane1_approved",
-            extra={"claim_id": state.claim_id, "voucher": state.voucher_code},
-        )
+        logger.info("a5_lane1_approved", extra={"claim_id": state.claim_id, "voucher": state.voucher_code})
 
     async def _handle_lane2(self, state: ClaimState) -> None:
         """Staff review: push to HITL queue."""
