@@ -3,22 +3,35 @@ import { useRef } from 'react'
 /**
  * ChatInput — bottom bar with file upload, text field, and send button.
  *
- * T-003 scope: UI shell only — handlers are stubs that log to console.
- * Full backend wiring happens in T-013 (feature/simulator-full-flow).
+ * T-013 update:
+ *   - Send button enabled when text is present OR photos are staged (hasPendingImages)
+ *   - onKeyDown prop for Enter-key support wired from App.jsx
+ *   - disabled prop blocks all inputs while backend is responding
  *
- * @param {string}   value         - Controlled text input value
- * @param {Function} onChange       - Text change handler
- * @param {Function} onSend         - Called when send button pressed or Enter hit
- * @param {Function} onFileSelect   - Called when files selected via picker
- * @param {boolean}  disabled       - Disable all inputs while awaiting reply
+ * @param {string}   value            - Controlled text input value
+ * @param {Function} onChange         - Text change handler
+ * @param {Function} onSend           - Called when send button pressed
+ * @param {Function} onKeyDown        - Key down handler (Enter to send)
+ * @param {Function} onFileSelect     - Called when files selected via picker
+ * @param {boolean}  disabled         - Disable all inputs while awaiting reply
+ * @param {boolean}  hasPendingImages - True when photos are staged; enables send
  */
-export default function ChatInput({ value, onChange, onSend, onFileSelect, disabled = false }) {
+export default function ChatInput({
+  value,
+  onChange,
+  onSend,
+  onKeyDown,
+  onFileSelect,
+  disabled = false,
+  hasPendingImages = false,
+}) {
   const fileInputRef = useRef(null)
+  const canSend = !disabled && (value.trim().length > 0 || hasPendingImages)
 
   return (
     <div className="flex items-center gap-2 bg-[#F0F0F0] px-3 py-2">
 
-      {/* Hidden multi-file input — triggered by paperclip button below */}
+      {/* Hidden multi-file input — triggered by paperclip button */}
       <input
         ref={fileInputRef}
         type="file"
@@ -52,13 +65,13 @@ export default function ChatInput({ value, onChange, onSend, onFileSelect, disab
         </svg>
       </button>
 
-      {/* Text input — Enter key also triggers send */}
+      {/* Text input */}
       <input
         type="text"
         value={value}
         onChange={onChange}
-        onKeyDown={(e) => e.key === 'Enter' && !disabled && onSend()}
-        placeholder="Type a message…"
+        onKeyDown={onKeyDown}
+        placeholder={hasPendingImages ? 'Add a caption… (optional)' : 'Type a message…'}
         disabled={disabled}
         className="flex-1 rounded-full bg-white px-4 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none ring-1 ring-transparent focus:ring-[#128C7E] disabled:opacity-40"
       />
@@ -66,7 +79,7 @@ export default function ChatInput({ value, onChange, onSend, onFileSelect, disab
       {/* Send button */}
       <button
         onClick={onSend}
-        disabled={disabled || !value.trim()}
+        disabled={!canSend}
         aria-label="Send message"
         className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[#075E54] text-white transition-colors hover:bg-[#128C7E] disabled:cursor-not-allowed disabled:opacity-40"
       >
