@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import time
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from backend.core.logging import bind_request_id, generate_request_id, reset_request_id
+from backend.core.logging import (bind_request_id, generate_request_id,
+                                  reset_request_id)
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
@@ -27,5 +29,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             reset_request_id(token)
 
         response.headers["x-request-id"] = request_id
-        response.headers["x-response-time-ms"] = str(int((time.perf_counter() - start) * 1000))
+        response.headers["x-response-time-ms"] = str(
+            int((time.perf_counter() - start) * 1000)
+        )
         return response

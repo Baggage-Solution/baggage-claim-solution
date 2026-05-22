@@ -1,87 +1,178 @@
-# Feature Branch Documentation Template
-# Copy this file for each branch: BRANCH_DOCS/feature-T-XXX-desc.md
+# BRANCH: [branch-name]
+<!-- Copy this file → BRANCH_DOCS/WEEK{N}_DOCS/{T-XXX-branch-name}.md -->
+<!-- Follow naming: T-001-chore-repo-setup.md, T-010-feature-agent-a2-vision.md etc. -->
 
-## Branch metadata
+---
 
-| Field | Value |
-|---|---|
-| Branch name | `feature/T-XXX-short-description` |
-| Task ID | T-XXX |
-| Workstream | [Vision AI / Backend / LangGraph / etc.] |
-| Author | [Anoushka / Aditya / Devam] |
-| Reviewer | [Name] |
-| Start date | Day X, Week Y |
-| Target merge date | Day X, Week Y |
-| Actual merge date | |
-| Status | Not Started / In Progress / Ready for Review / Merged |
+## Branch Metadata
+
+```
+Branch Name   →  feature/short-description   (or chore/ fix/ integration/ docs/)
+Task ID       →  T-XXX
+Workstream    →  [Project Setup / Backend / LangGraph / Vision AI / LLM / Frontend / Integration / Docs]
+Author        →  [Anoushka Vyas / Aditya Bhavsar / Devam Dixit]
+Reviewer      →  [Name]
+Start Date    →  Day X, Week Y
+Target Merge  →  Day X, Week Y
+Actual Merge  →  Day X, Week Y
+Status        →  [Not Started / In Progress / Ready for Review / Merged]
+```
+
+---
 
 ## Objective
 
 **What does this branch do?**
-1–3 sentence summary.
+1–3 sentence summary of what was implemented.
 
 **Why is it needed?**
-How does it fit the overall architecture?
+How does it fit the overall architecture? What breaks or stays blocked without it?
 
-## Technical approach
+---
 
-**Files created**
+## Local Setup
 
-| File | Purpose |
-|---|---|
-| `backend/agents/a2_vision.py` | A2 vision analysis LangGraph node |
+```bash
+source venv/Scripts/activate      # Git Bash / Windows
+# source venv/bin/activate        # Mac / Linux
 
-**Files modified**
+pip install -r requirements.txt
+pytest tests/test_XXX.py -v
+```
+
+---
+
+## Technical Approach
+
+**Files Modified:**
 
 | File | What changed |
 |---|---|
+| `backend/agents/aX_xxx.py` | Replaced TODO stub with full implementation. Added ... |
 
-**Provider / abstraction used**
-e.g. Implements `VisionProvider` ABC via Gemini Flash API.
+**Files Created:**
 
-**Key design decisions**
-Any non-obvious choices and why.
+| File | Purpose |
+|---|---|
+| `tests/test_aX_xxx.py` | N unit tests — describe coverage |
 
-**Future swap path**
-e.g. Replace `gemini_vision.py` with `yolov8_vision.py` when ready. Set `VISION_PROVIDER=yolov8`.
+**Files Already Complete (No Changes Needed):**
+
+| File | What was already there |
+|---|---|
+| `backend/xxx/base.py` | ABC / interface — complete from T-00X |
+
+**Provider / Abstraction Used:**
+
+```
+Implements:  [XxxProvider ABC / BaseAgent / etc.]
+Via:         [Gemini Flash / Supabase / local storage / etc.]
+Injected by: provide_xxx() in dependencies.py
+Agent imports: XxxProvider only — never the concrete class directly
+```
+
+**Key Design Decisions:**
+
+```
+1. DECISION NAME
+   Explanation of the non-obvious choice and why it was made.
+
+2. DECISION NAME
+   Explanation.
+```
+
+**Future Swap Path:**
+
+```
+To swap [current provider] for [alternative]:
+1. Create backend/xxx_provider/alternative.py
+2. Implement the ABC
+3. Set XXX_PROVIDER=alternative in .env
+4. Zero other code changes needed.
+```
+
+---
 
 ## Dependencies
 
-| Field | Value |
-|---|---|
-| Depends on (task IDs) | T-004, T-005 |
-| External libraries | `google-generativeai==0.8.3` |
-| Environment variables | `GEMINI_API_KEY`, `VISION_PROVIDER=gemini` |
+```
+Depends On          →  T-XXX (reason why)
+External Libraries  →  library==version (already in requirements.txt / new addition)
+Environment Vars    →  VAR_NAME (existing / new — update .env.example if new)
+```
+
+---
 
 ## Testing
 
-**How to test (manual)**
-Step-by-step: what to run, what to check.
+**Run tests:**
 
-**Automated tests**
-Path to test file: `tests/test_a2_vision.py`
+```bash
+pytest tests/test_XXX.py -v
+# Expected: N passed
 
-**Test data used**
-e.g. `tests/fixtures/damaged/suitcase_01.jpg`
+pytest tests/ -v
+# Expected: N passed total
+```
 
-**Acceptance criteria**
-Copy from task tracker — what must pass for merge approval.
+**Manual Smoke Test:**
 
-## PR checklist
+```bash
+uvicorn backend.main:app --reload --port 8000
 
-- [ ] Type hints on all new functions
-- [ ] Docstrings on all public functions/classes
-- [ ] `.env.example` updated with new vars
-- [ ] No hardcoded provider names in `agents/`
-- [ ] At least 1 test written
-- [ ] `pytest` passes locally
-- [ ] PR description filled out on GitHub
-- [ ] Reviewer assigned
+curl -X POST http://localhost:8000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "smoke-001", "message": "..."}'
+# Expected: ...
+```
 
-## Notes / blockers
+**Test Data Used:**
+`tests/fixtures/...` — describe what fixtures are needed.
 
-| Field | Value |
-|---|---|
-| Known issues | |
-| Blockers | |
-| Links | |
+**Acceptance Criteria:**
+
+```
+✅ Criterion 1
+✅ Criterion 2
+✅ pytest → N passed, 0 failures
+✅ black + isort clean
+```
+
+---
+
+## PR Checklist
+
+```
+[x] PR title includes Task ID — [T-XXX] feat/fix/chore/docs: ...
+[x] PR description filled out on GitHub
+[x] Base branch set to develop (not main)
+[x] Reviewer assigned
+[x] Squash merged to develop
+[x] Feature branch deleted after merge
+
+[x] Type hints on all new/modified functions
+[x] Google-style docstrings on all public functions
+[ ] .env.example updated (only if new env vars added)
+[x] No hardcoded provider names in agents/ or orchestrator
+[x] No hardcoded API keys
+[x] pytest tests/ → N passed, 0 failures
+[x] black backend/ tests/ → clean
+[x] isort backend/ tests/ → clean
+[x] Branch doc committed to BRANCH_DOCS/ before merge
+```
+
+---
+
+## Notes / Blockers
+
+```
+Known Issues  →  [None / description]
+Scope Note    →  What is intentionally deferred to a future task.
+Blockers      →  [None / description]
+Links         →  Relevant docs, library links, architecture references
+```
+
+---
+
+*Branch opened: Day X, Week Y — [Author]*
+*Merged to develop: Day X, Week Y*
