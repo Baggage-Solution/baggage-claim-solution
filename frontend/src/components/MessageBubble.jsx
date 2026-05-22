@@ -1,11 +1,16 @@
 /**
  * MessageBubble — single chat message in WhatsApp style.
- * Supports text content, image upload previews, timestamp, and read ticks.
+ * Supports text content, real image upload previews (with URLs),
+ * timestamp, and read ticks.
  *
- * @param {'user'|'bot'} sender       - Who sent the message
- * @param {string}       text         - Message body text
- * @param {string}       timestamp    - Display time string (e.g. '10:42')
- * @param {Array}        imagePreviews - Optional array of { name: string }
+ * T-013 update: imagePreviews now supports { name, url } objects.
+ * If a URL is provided the image is shown as a real thumbnail.
+ * Falls back to the 📷 placeholder for name-only objects (T-003 compat).
+ *
+ * @param {'user'|'bot'} sender         - Who sent the message
+ * @param {string}       text           - Message body text
+ * @param {string}       timestamp      - Display time string (e.g. '10:42')
+ * @param {Array}        imagePreviews  - Array of { name: string, url?: string }
  */
 export default function MessageBubble({ sender, text, timestamp, imagePreviews = [] }) {
   const isUser = sender === 'user'
@@ -20,22 +25,31 @@ export default function MessageBubble({ sender, text, timestamp, imagePreviews =
         {/* Image upload previews */}
         {imagePreviews.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
-            {imagePreviews.map((img, i) => (
-              <div
-                key={i}
-                className="flex h-20 w-20 items-center justify-center rounded-md bg-gray-200 text-center text-xs text-gray-500"
-              >
-                📷
-                <br />
-                {img.name}
-              </div>
-            ))}
+            {imagePreviews.map((img, i) =>
+              img.url ? (
+                <img
+                  key={i}
+                  src={img.url}
+                  alt={img.name}
+                  className="h-20 w-20 rounded-md object-cover shadow-sm"
+                />
+              ) : (
+                <div
+                  key={i}
+                  className="flex h-20 w-20 items-center justify-center rounded-md bg-gray-200 text-center text-xs text-gray-500"
+                >
+                  📷
+                  <br />
+                  {img.name}
+                </div>
+              ),
+            )}
           </div>
         )}
 
-        {/* Message text */}
+        {/* Message text — preserve newlines */}
         {text && (
-          <p className="text-sm leading-relaxed text-gray-800">{text}</p>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-800">{text}</p>
         )}
 
         {/* Timestamp + double blue tick for sent messages */}
