@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
-
 from fastapi import APIRouter
 from pydantic import BaseModel
+from typing import Optional
 
 from backend.dependencies import provide_db
 
@@ -14,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class DecisionRequest(BaseModel):
     claim_id: str
-    action: str  # "approve" | "reject"
+    action: str          # "approve" | "reject"
     agent_id: str
     notes: Optional[str] = None
     modified_compensation: Optional[float] = None
@@ -51,11 +50,7 @@ async def agent_decision(payload: DecisionRequest) -> DecisionResponse:
 
     logger.info(
         "agent_decision_received",
-        extra={
-            "claim_id": payload.claim_id,
-            "action": payload.action,
-            "agent": payload.agent_id,
-        },
+        extra={"claim_id": payload.claim_id, "action": payload.action, "agent": payload.agent_id},
     )
 
     return DecisionResponse(

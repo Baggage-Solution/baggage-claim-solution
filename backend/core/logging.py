@@ -17,6 +17,7 @@ from starlette.responses import Response
 
 from backend.core.masking import mask_sensitive_text, mask_sensitive_value
 
+
 _request_id_ctx_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
 _STANDARD_RECORD_FIELDS = set(logging.makeLogRecord({}).__dict__.keys())
 _MESSAGE_PREFIX_RE = re.compile(r"^\[(?P<component>[^\]]+)\]\s*(?P<message>.*)$")
