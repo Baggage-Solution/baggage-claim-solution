@@ -5,7 +5,6 @@ from typing import Any
 
 from pydantic import BaseModel
 
-
 MASK_TOKEN = "[REDACTED]"
 
 # ── Proj A patterns (kept as-is) ─────────────────────────────────────────────

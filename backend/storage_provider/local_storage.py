@@ -24,7 +24,9 @@ class LocalStorageProvider(StorageProvider):
         path = os.path.join(claim_dir, filename)
         with open(path, "wb") as f:
             f.write(file_bytes)
-        logger.info("local_storage_saved", extra={"path": path, "size": len(file_bytes)})
+        logger.info(
+            "local_storage_saved", extra={"path": path, "size": len(file_bytes)}
+        )
         return path
 
     async def get_path(self, filename: str, claim_id: str) -> str:

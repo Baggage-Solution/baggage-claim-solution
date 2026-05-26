@@ -3,10 +3,10 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.routes import decision, health, webhook
 from backend.config import get_settings
 from backend.core.logging import configure_logging
 from backend.core.middleware import RequestContextMiddleware
-from backend.api.routes import health, webhook, decision
 
 settings = get_settings()
 configure_logging(level=settings.log_level, fmt=settings.log_format)
@@ -21,7 +21,7 @@ app = FastAPI(
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # POC only — restrict in production
+    allow_origins=["*"],  # POC only — restrict in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
