@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -22,25 +22,9 @@ def _build_graph() -> StateGraph:
                          ┌─ a2 → a3 → a1_image → [a4 → [a5→END | END] | END]
     START → router ──────┤
                          └─ a1_text → END
-
-    WHY A2/A3 RUN BEFORE A1 ON IMAGE TURNS:
-    A1 generates the passenger-facing reply. For image turns the reply must
-    include what was found in the photos (damage types, severity, OCR data).
-    Running A2→A3 first populates state fields that A1 then weaves into its
-    response via the step prompt context injection.
-
-    WHY conversation_step IS PASSED FROM FRONTEND:
-    LangGraph MemorySaver does NOT persist plain dataclass field values between
-    separate ainvoke() calls — input state overrides the checkpoint for fields
-    without Annotated reducers. The frontend echoes the step it received from
-    the last response back on the next request, making it the authoritative source.
     """
 
     async def router_node(state: ClaimState) -> ClaimState:
-        """
-        Stateless dispatch node — sets _route flag based on image presence.
-        No LLM call here; just prepares routing decision for the conditional edge.
-        """
         return state
 
     def _route_from_router(state: ClaimState) -> str:
@@ -61,82 +45,76 @@ def _build_graph() -> StateGraph:
         return "a1_text"
 
     async def a1_text_node(state: ClaimState) -> ClaimState:
-        """A1 for text-only turns (greeting, description, 'yes' at confirm)."""
         from backend.agents.a1_conversation import A1ConversationAgent
         from backend.dependencies import provide_llm
-
         return await A1ConversationAgent(llm=provide_llm()).handle(state, [])
 
     async def a2_node(state: ClaimState) -> ClaimState:
         from backend.agents.a2_vision import A2VisionAgent
         from backend.dependencies import provide_vision
-
         return await A2VisionAgent(vision=provide_vision()).handle(state, [])
 
     async def a3_node(state: ClaimState) -> ClaimState:
         from backend.agents.a3_ocr import A3OCRAgent
         from backend.dependencies import provide_ocr
-
         return await A3OCRAgent(ocr=provide_ocr()).handle(state, [])
 
     async def a1_image_node(state: ClaimState) -> ClaimState:
-        """
-        A1 for image turns — runs AFTER A2+A3 so it can include damage
-        assessment and OCR data in its passenger-facing reply.
-        """
         from backend.agents.a1_conversation import A1ConversationAgent
         from backend.dependencies import provide_llm
-
         return await A1ConversationAgent(llm=provide_llm()).handle(state, [])
 
     async def a4_node(state: ClaimState) -> ClaimState:
         from backend.agents.a4_decision import A4DecisionAgent
         from backend.dependencies import provide_db
-
         return await A4DecisionAgent(db=provide_db()).handle(state, [])
 
     async def a5_node(state: ClaimState) -> ClaimState:
-        """
-        A5 with DB injected — updates claim status in Supabase after routing.
-        Lane 1: status → APPROVED + SSE push with voucher.
-        Lane 2: status → AWAITING_REVIEW + SSE push for 'Under Review' card.
-        """
         from backend.agents.a5_notification import A5NotificationAgent
         from backend.dependencies import provide_db
-
         return await A5NotificationAgent(db=provide_db()).handle(state, [])
 
     def _route_after_a1_image(state: ClaimState) -> str:
         """
-        Run A4 only when BOTH damage AND tag images are present.
-        A4 needs both to perform fraud checks and make the routing decision.
+        Route to A4 only when:
+        1. Both damage AND tag images are present.
+        2. A1 has advanced step to "result" — meaning the passenger confirmed.
+
+        On the tag_photo turn: A1 advances tag_photo → confirm (routing_lane still None).
+        step="confirm" → skip A4. Passenger still needs to type "yes".
+
+        On the confirm turn: A1 advances confirm → result.
+        step="result" → run A4. Claim is processed.
         """
         damage_paths = [p for p in state.image_paths if "tag" not in p.lower()]
         tag_paths = [p for p in state.image_paths if "tag" in p.lower()]
+        has_both = bool(damage_paths and tag_paths)
+        passenger_confirmed = state.conversation_step == "result"
 
-        if damage_paths and tag_paths:
+        if has_both and passenger_confirmed:
             logger.info(
-                "route_to_a4: full image set present",
+                "route_to_a4: full image set + passenger confirmed",
                 extra={
                     "session_id": state.session_id,
                     "damage_count": len(damage_paths),
                     "tag_count": len(tag_paths),
+                    "conversation_step": state.conversation_step,
                 },
             )
             return "a4"
 
         logger.info(
-            "route_skip_a4: waiting for more images",
+            "route_skip_a4: waiting for confirmation or more images",
             extra={
                 "session_id": state.session_id,
-                "damage_count": len(damage_paths),
-                "tag_count": len(tag_paths),
+                "has_both": has_both,
+                "passenger_confirmed": passenger_confirmed,
+                "conversation_step": state.conversation_step,
             },
         )
         return "end"
 
     def _route_after_a4(state: ClaimState) -> str:
-        """Only proceed to A5 if A4 successfully set routing_lane."""
         if state.routing_lane in (1, 2):
             return "a5"
         logger.warning(
@@ -145,7 +123,6 @@ def _build_graph() -> StateGraph:
         )
         return "end"
 
-    # ── Build graph ───────────────────────────────────────────────────────────
     graph = StateGraph(ClaimState)
 
     graph.add_node("router", router_node)
@@ -156,36 +133,16 @@ def _build_graph() -> StateGraph:
     graph.add_node("a4", a4_node)
     graph.add_node("a5", a5_node)
 
-    # Entry
     graph.add_edge(START, "router")
-
-    # Router dispatch
-    graph.add_conditional_edges(
-        "router",
-        _route_from_router,
-        {"a1_text": "a1_text", "a2": "a2"},
-    )
-
-    # Text branch
+    graph.add_conditional_edges("router", _route_from_router, {"a1_text": "a1_text", "a2": "a2"})
     graph.add_edge("a1_text", END)
-
-    # Image branch
     graph.add_edge("a2", "a3")
     graph.add_edge("a3", "a1_image")
-    graph.add_conditional_edges(
-        "a1_image",
-        _route_after_a1_image,
-        {"a4": "a4", "end": END},
-    )
-    graph.add_conditional_edges(
-        "a4",
-        _route_after_a4,
-        {"a5": "a5", "end": END},
-    )
+    graph.add_conditional_edges("a1_image", _route_after_a1_image, {"a4": "a4", "end": END})
+    graph.add_conditional_edges("a4", _route_after_a4, {"a5": "a5", "end": END})
     graph.add_edge("a5", END)
 
     compiled = graph.compile(checkpointer=_checkpointer)
-
     logger.info(
         "graph_compiled",
         extra={
@@ -215,25 +172,29 @@ class ClaimOrchestrator:
         image_paths: list[str] | None = None,
         conversation_history: list | None = None,
         conversation_step: str = "greeting",
+        conversation_ended: bool = False,
+        # A2 echoed results
+        processed_damage_paths: list[str] | None = None,
+        damage_types: list[str] | None = None,
+        severity_score: float = 0.0,
+        brand_detected: str | None = None,
+        is_luxury: bool = False,
+        compensation_estimate_usd: float = 0.0,
+        # A3 echoed results
+        flight_number: str | None = None,
+        pnr: str | None = None,
+        bag_id: str | None = None,
+        ocr_confidence: float = 0.0,
         request_id: Optional[str] = None,
     ) -> ClaimState:
         """
         Run the agent pipeline for one passenger turn.
 
-        conversation_step is injected from the frontend because LangGraph
-        MemorySaver does not persist plain dataclass fields across separate
-        ainvoke() calls — the frontend echoes the step from the last response.
-
-        Args:
-            session_id: Unique session identifier from the simulator.
-            passenger_message: The passenger's text message.
-            image_paths: List of local file paths for uploaded images.
-            conversation_history: Previous turns for A1 context.
-            conversation_step: Current step echoed from last response.
-            request_id: Request tracing ID from middleware.
-
-        Returns:
-            Final ClaimState after full pipeline execution.
+        A2 and A3 results are echoed back from the frontend on every request
+        because LangGraph MemorySaver does not persist plain dataclass fields
+        between separate ainvoke() calls. Without this, the confirm turn would
+        start with blank damage_types/severity/compensation and A4 would always
+        see $0 compensation → always route to Lane 1 regardless of actual damage.
         """
         state = ClaimState(
             session_id=session_id,
@@ -241,6 +202,19 @@ class ClaimOrchestrator:
             image_paths=image_paths or [],
             conversation_history=conversation_history or [],
             conversation_step=conversation_step,
+            # Seed A2 results from echoed frontend state
+            conversation_ended=conversation_ended,
+            processed_damage_paths=processed_damage_paths or [],
+            damage_types=damage_types or [],
+            severity_score=severity_score,
+            brand_detected=brand_detected,
+            is_luxury=is_luxury,
+            compensation_estimate_usd=compensation_estimate_usd,
+            # Seed A3 results from echoed frontend state
+            flight_number=flight_number,
+            pnr=pnr,
+            bag_id=bag_id,
+            ocr_confidence=ocr_confidence,
             request_id=request_id,
         )
 
@@ -254,6 +228,8 @@ class ClaimOrchestrator:
                     "request_id": request_id,
                     "conversation_step": conversation_step,
                     "image_count": len(image_paths or []),
+                    "seeded_severity": severity_score,
+                    "seeded_compensation": compensation_estimate_usd,
                 },
             )
 

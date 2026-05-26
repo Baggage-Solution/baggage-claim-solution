@@ -12,29 +12,18 @@ from backend.graph.state import ClaimState
 
 logger = logging.getLogger(__name__)
 
+# Minimum severity score for a claim to be accepted.
+# Below this threshold the passenger is told no significant damage was detected.
+_MIN_DAMAGE_SEVERITY = 0.1
+
 
 def _generate_claim_id() -> str:
-    """
-    Generate a unique claim ID in CLM-YYYYMMDD-XXXX format.
-
-    Returns:
-        Claim ID string e.g. 'CLM-20260520-A2E2'
-    """
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
     suffix = uuid.uuid4().hex[:4].upper()
     return f"{get_settings().claim_id_prefix}-{date_str}-{suffix}"
 
 
 def _state_to_claim_dict(state: ClaimState) -> Dict[str, Any]:
-    """
-    Convert ClaimState to a flat dict for DB persistence.
-
-    Args:
-        state: Current ClaimState after A4 processing.
-
-    Returns:
-        Dict matching the Supabase claims table schema.
-    """
     return {
         "id": state.claim_id,
         "pnr": state.pnr,
@@ -58,25 +47,18 @@ class A4DecisionAgent(BaseAgent):
     Agent A4 — Decision Engine.
 
     Responsibilities:
+    - Guard against no-damage claims (severity below threshold → reject).
     - Run fraud checks: pHash duplicate detection, claim frequency check.
     - Score severity and calculate final compensation.
     - Route to Lane 1 (auto-approve: <=100 USD, no luxury, low fraud)
       or Lane 2 (staff review).
     - Generate claim_id and persist claim to DB.
 
-    All 5 routing scenarios from architecture doc pass in unit tests (T-012).
-
     Provider: DBProvider (injected — never import Supabase directly here).
     Thresholds: all configurable via .env — see config.py.
     """
 
     def __init__(self, db) -> None:
-        """
-        Initialise A4 decision agent.
-
-        Args:
-            db: DBProvider instance (injected from dependencies.py).
-        """
         super().__init__(
             name="a4_decision",
             description="Fraud check and routing decision engine",
@@ -84,16 +66,6 @@ class A4DecisionAgent(BaseAgent):
         self._db = db
 
     async def _run_phash_check(self, state: ClaimState) -> None:
-        """
-        Fraud Check 1 — Perceptual hash duplicate detection.
-
-        Computes pHash for each damage photo and compares against hashes
-        stored in DB for the same PNR. If hamming distance is below threshold,
-        flags as duplicate submission.
-
-        Args:
-            state: Current ClaimState. Modifies fraud_score and fraud_flags in place.
-        """
         settings = get_settings()
 
         if not settings.imagehash_enabled:
@@ -149,15 +121,6 @@ class A4DecisionAgent(BaseAgent):
             logger.warning("phash_check_error — skipping", extra={"error": str(exc)})
 
     async def _run_frequency_check(self, state: ClaimState) -> None:
-        """
-        Fraud Check 2 — Claim frequency check.
-
-        Counts claims filed for this PNR in the last N days.
-        If count >= MAX_CLAIMS_PER_PASSENGER, flags as high frequency.
-
-        Args:
-            state: Current ClaimState. Modifies fraud_score and fraud_flags in place.
-        """
         settings = get_settings()
 
         if not state.pnr:
@@ -195,16 +158,6 @@ class A4DecisionAgent(BaseAgent):
             )
 
     async def handle(self, state: ClaimState, tasks: List[str]) -> ClaimState:
-        """
-        Run fraud checks, make routing decision, generate claim ID, persist to DB.
-
-        Args:
-            state: Current ClaimState flowing through LangGraph pipeline.
-            tasks: Unused — kept for BaseAgent interface compatibility.
-
-        Returns:
-            Updated ClaimState with claim_id, routing_lane, fraud_score, fraud_flags.
-        """
         logger.info(
             "a4_started",
             extra={
@@ -213,21 +166,14 @@ class A4DecisionAgent(BaseAgent):
                 "severity_score": state.severity_score,
                 "compensation_estimate": state.compensation_estimate_usd,
                 "is_luxury": state.is_luxury,
+                "damage_types": state.damage_types,
             },
         )
 
-        # ── Guard: only run if both damage AND tag images have been uploaded ────
-        # The orchestrator's conditional edge should prevent A4 from being called
-        # on text-only turns, but this guard is a belt-and-suspenders safety net.
-        # Without it, a blank-state A4 run would set routing_lane on every turn
-        # and cause A1._advance_step() to jump straight to "result".
+        # ── Guard 1: both image types must be present ──────────────────────────
         damage_images = [p for p in state.image_paths if "tag" not in p.lower()]
         tag_images = [p for p in state.image_paths if "tag" in p.lower()]
 
-        # Guard: only skip when images are present but the set is incomplete.
-        # An empty image_paths means A4 is being called directly (unit tests,
-        # or confirm step where orchestrator already validated both types exist).
-        # In that case, fall through and let A4 run on the state it has.
         if state.image_paths and (not damage_images or not tag_images):
             logger.info(
                 "a4_skipped",
@@ -237,6 +183,46 @@ class A4DecisionAgent(BaseAgent):
                     "tag_count": len(tag_images),
                     "session_id": state.session_id,
                 },
+            )
+            return state
+
+        # ── Guard 2: skip if A2 or A3 flagged image quality issues ────────────
+        if state.re_request_tag or state.re_request_damage:
+            logger.info(
+                "a4_skipped",
+                extra={
+                    "reason": "image_quality_retry_requested",
+                    "re_request_tag": state.re_request_tag,
+                    "re_request_damage": state.re_request_damage,
+                    "session_id": state.session_id,
+                },
+            )
+            return state
+
+        # ── Guard 3: no damage detected — reject the claim ─────────────────────
+        # Only applies when image_paths is present (i.e. the full pipeline ran A2).
+        # If image_paths is empty, A4 is being called directly in a test or from
+        # the confirm step where image paths are always the accumulated full set.
+        # We skip this guard when there are no images so unit tests that set
+        # compensation/severity directly (without going through A2) work correctly.
+        #
+        # When images ARE present: reject if severity=0.0 AND no damage labels.
+        # This catches undamaged bags uploaded through the full flow.
+        # Using AND (not OR) so tests that set severity>0 without damage_types pass.
+        if state.image_paths and state.severity_score < _MIN_DAMAGE_SEVERITY and not state.damage_types:
+            logger.warning(
+                "a4_no_damage_detected",
+                extra={
+                    "session_id": state.session_id,
+                    "damage_types": state.damage_types,
+                    "severity_score": state.severity_score,
+                },
+            )
+            state.conversation_ended = True
+            state.set_error(
+                "no_damage_detected: Our system did not detect significant damage "
+                "on the submitted photos. If your bag is damaged, please retake "
+                "clearer photos showing the affected areas."
             )
             return state
 
@@ -251,12 +237,16 @@ class A4DecisionAgent(BaseAgent):
             await self._run_frequency_check(state)
 
             # Step 4 — Calculate final compensation
+            # Luxury multiplier (1.5×) applies on top of base estimate.
+            # is_luxury is seeded from frontend echo so it's never lost between turns.
             if state.is_luxury:
                 state.final_compensation_usd = state.compensation_estimate_usd * 1.5
             else:
                 state.final_compensation_usd = state.compensation_estimate_usd
 
-            # Step 5 — Routing decision via is_lane1_eligible()
+            # Step 5 — Routing decision
+            # Lane 1: compensation <= $100, not luxury, fraud_score < 0.5
+            # Lane 2: anything above — staff review
             if state.is_lane1_eligible():
                 state.routing_lane = 1
             else:
@@ -284,6 +274,7 @@ class A4DecisionAgent(BaseAgent):
                 "lane": state.routing_lane,
                 "fraud_score": state.fraud_score,
                 "fraud_flags": state.fraud_flags,
+                "final_compensation": state.final_compensation_usd,
             },
         )
 

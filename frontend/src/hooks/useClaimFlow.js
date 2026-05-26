@@ -3,18 +3,27 @@ import { useCallback, useRef, useState } from 'react'
 /**
  * useClaimFlow — manages the full baggage claim conversation.
  *
- * KEY DESIGN DECISIONS:
+ * WHY WE ECHO STATE BACK TO THE BACKEND:
+ * LangGraph MemorySaver does not persist plain dataclass fields between
+ * separate ainvoke() calls. Each turn starts with a fresh ClaimState at defaults.
+ * The frontend stores key results from each response and sends them back on the
+ * next request so the backend always has the full picture:
  *
- * 1. conversation_step is sent to backend on every request.
- *    LangGraph MemorySaver does not persist plain dataclass field values
- *    between separate ainvoke() calls. The backend creates a fresh ClaimState
- *    with step="greeting" each call unless we supply the current step.
- *    Frontend tracks the step from each response and echoes it back.
+ *   conversation_step       — which step the flow is on
+ *   processed_damage_paths  — which damage photos A2 already analysed (skip re-analysis)
+ *   damage_types            — A2 result: what damage was found
+ *   severity_score          — A2 result: how severe (0.0–1.0)
+ *   brand_detected          — A2 result: bag brand
+ *   is_luxury               — A2 result: luxury flag (affects compensation × 1.5)
+ *   compensation_estimate   — A2 result: base USD estimate
+ *   flight_number           — A3 result: from bag tag OCR
+ *   pnr                     — A3 result: passenger name record
+ *   bag_id                  — A3 result: bag tag number
+ *   ocr_confidence          — A3 result: OCR quality score
  *
- * 2. allUploadedPaths accumulates every uploaded image path across the session.
- *    At the "confirm" step the user sends only text ("yes"). A4 still needs
- *    all image paths for fraud checks and routing. Resending the full set
- *    on every webhook call guarantees A4 has everything it needs.
+ * Without echoing A2/A3 results, the confirm turn would start with blank
+ * damage_types and severity=0, causing A4 to always route to Lane 1 with $0
+ * compensation regardless of the actual damage.
  */
 
 const BACKEND = 'http://localhost:8000'
@@ -39,7 +48,24 @@ export function useClaimFlow() {
   const sessionId = useRef(makeSessionId())
   const claimIdRef = useRef(null)
   const conversationHistory = useRef([])
-  const allUploadedPaths = useRef([])   // accumulates ALL uploaded paths for this session
+  const allUploadedPaths = useRef([])
+
+  // Echoed state — all persisted across turns and sent back each request
+  const echoedState = useRef({
+    conversation_ended: false,
+    processed_damage_paths: [],
+    // A2 results
+    damage_types: [],
+    severity_score: 0.0,
+    brand_detected: null,
+    is_luxury: false,
+    compensation_estimate_usd: 0.0,
+    // A3 results
+    flight_number: null,
+    pnr: null,
+    bag_id: null,
+    ocr_confidence: 0.0,
+  })
 
   const [messages, setMessages] = useState([
     botMsg(
@@ -75,13 +101,6 @@ export function useClaimFlow() {
     }
   }, [])
 
-  /**
-   * callWebhook — sends message + full accumulated image paths + current step.
-   *
-   * Always sends:
-   *   - allUploadedPaths.current (full set, not just this turn's paths)
-   *   - step (current frontend step, echoed to backend to preserve conversation flow)
-   */
   const callWebhook = useCallback(async (message, newImagePaths = []) => {
     if (newImagePaths.length > 0) {
       allUploadedPaths.current = [...allUploadedPaths.current, ...newImagePaths]
@@ -92,7 +111,9 @@ export function useClaimFlow() {
       message,
       image_paths: allUploadedPaths.current,
       conversation_history: conversationHistory.current,
-      conversation_step: step,   // ← echo current step to backend
+      conversation_step: step,
+      // Echo all persisted state back to backend
+      ...echoedState.current,
     }
 
     try {
@@ -111,12 +132,28 @@ export function useClaimFlow() {
       ]
 
       if (data.claim_id) claimIdRef.current = data.claim_id
+
+      // Update all echoed fields from response
+      echoedState.current = {
+        conversation_ended: data.conversation_ended ?? echoedState.current.conversation_ended,
+        processed_damage_paths: data.processed_damage_paths ?? echoedState.current.processed_damage_paths,
+        damage_types: data.damage_types ?? echoedState.current.damage_types,
+        severity_score: data.severity_score ?? echoedState.current.severity_score,
+        brand_detected: data.brand_detected ?? echoedState.current.brand_detected,
+        is_luxury: data.is_luxury ?? echoedState.current.is_luxury,
+        compensation_estimate_usd: data.compensation_estimate_usd ?? echoedState.current.compensation_estimate_usd,
+        flight_number: data.flight_number ?? echoedState.current.flight_number,
+        pnr: data.pnr ?? echoedState.current.pnr,
+        bag_id: data.bag_id ?? echoedState.current.bag_id,
+        ocr_confidence: data.ocr_confidence ?? echoedState.current.ocr_confidence,
+      }
+
       return data
     } catch (err) {
       console.error('[useClaimFlow] webhook error:', err)
       return null
     }
-  }, [step])   // step is a dependency — callWebhook reads it
+  }, [step])
 
   const handleSendText = useCallback(
     async (text) => {
@@ -189,6 +226,12 @@ export function useClaimFlow() {
   )
 
   function _handleResult(response) {
+    // No damage confirmed — lock the chat, no claim filed
+    if (response.conversation_ended) {
+      setInputDisabled(true)
+      setStep('result')
+      return
+    }
     if (response.routing_lane === 1) {
       setClaimResult({ lane: 1, voucherCode: response.voucher_code, claimId: response.claim_id })
       setInputDisabled(true)
