@@ -41,7 +41,6 @@ def _build_graph() -> StateGraph:
         Stateless dispatch node — sets _route flag based on image presence.
         No LLM call here; just prepares routing decision for the conditional edge.
         """
-        # Nothing to mutate; routing happens in the conditional edge function.
         return state
 
     def _route_from_router(state: ClaimState) -> str:
@@ -97,9 +96,15 @@ def _build_graph() -> StateGraph:
         return await A4DecisionAgent(db=provide_db()).handle(state, [])
 
     async def a5_node(state: ClaimState) -> ClaimState:
+        """
+        A5 with DB injected — updates claim status in Supabase after routing.
+        Lane 1: status → APPROVED + SSE push with voucher.
+        Lane 2: status → AWAITING_REVIEW + SSE push for 'Under Review' card.
+        """
         from backend.agents.a5_notification import A5NotificationAgent
+        from backend.dependencies import provide_db
 
-        return await A5NotificationAgent().handle(state, [])
+        return await A5NotificationAgent(db=provide_db()).handle(state, [])
 
     def _route_after_a1_image(state: ClaimState) -> str:
         """
@@ -218,6 +223,17 @@ class ClaimOrchestrator:
         conversation_step is injected from the frontend because LangGraph
         MemorySaver does not persist plain dataclass fields across separate
         ainvoke() calls — the frontend echoes the step from the last response.
+
+        Args:
+            session_id: Unique session identifier from the simulator.
+            passenger_message: The passenger's text message.
+            image_paths: List of local file paths for uploaded images.
+            conversation_history: Previous turns for A1 context.
+            conversation_step: Current step echoed from last response.
+            request_id: Request tracing ID from middleware.
+
+        Returns:
+            Final ClaimState after full pipeline execution.
         """
         state = ClaimState(
             session_id=session_id,
