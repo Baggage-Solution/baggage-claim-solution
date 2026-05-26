@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional  # ← add List
 
 
 class DBProvider(ABC):
     """
     Abstract interface for claim persistence.
     Swap by changing DB_PROVIDER env var.
-    Future: implement PostgresDBProvider for any PostgreSQL backend.
     """
 
     @abstractmethod
@@ -19,6 +18,20 @@ class DBProvider(ABC):
     @abstractmethod
     async def get_claim(self, claim_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve a claim by ID."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_claims_by_status(self, status: str) -> List[Dict[str, Any]]:
+        """
+        Return all claims matching the given status, newest first.
+        Used by GET /claims/pending for the agent dashboard (T-017).
+
+        Args:
+            status: Status string e.g. 'AWAITING_REVIEW', 'RESOLVED', 'REJECTED'.
+
+        Returns:
+            List of claim dicts ordered by created_at descending.
+        """
         raise NotImplementedError
 
     @abstractmethod

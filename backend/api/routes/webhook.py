@@ -26,10 +26,14 @@ orchestrator = ClaimOrchestrator()
 def verify_whatsapp_signature(payload: bytes, signature_header: Optional[str]) -> bool:
     app_secret = os.getenv("WHATSAPP_APP_SECRET")
     if not app_secret:
-        logger.debug("signature_verification_skipped — WHATSAPP_APP_SECRET not configured")
+        logger.debug(
+            "signature_verification_skipped — WHATSAPP_APP_SECRET not configured"
+        )
         return True
     if not signature_header:
-        logger.warning("signature_verification_failed — missing X-Hub-Signature-256 header")
+        logger.warning(
+            "signature_verification_failed — missing X-Hub-Signature-256 header"
+        )
         return False
     expected = (
         "sha256="
@@ -112,8 +116,12 @@ async def webhook(
         )
 
     except AppError as exc:
-        logger.warning("webhook_app_error", extra={"error": exc.message, "code": exc.code})
-        return WebhookResponse(session_id=payload.session_id, reply="", error=exc.message)
+        logger.warning(
+            "webhook_app_error", extra={"error": exc.message, "code": exc.code}
+        )
+        return WebhookResponse(
+            session_id=payload.session_id, reply="", error=exc.message
+        )
 
     except Exception as exc:
         logger.exception("webhook_unexpected_error")

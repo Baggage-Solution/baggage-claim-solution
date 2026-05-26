@@ -102,6 +102,7 @@ class GeminiVisionProvider(VisionProvider):
 
     def __init__(self, api_key: str, model: str = "gemini-2.5-flash") -> None:
         import google.generativeai as genai
+
         genai.configure(api_key=api_key)
         self._model = genai.GenerativeModel(model)
         self._model_name = model
@@ -125,7 +126,9 @@ class GeminiVisionProvider(VisionProvider):
                 f"Gemini returned invalid JSON for {context}: {raw_text[:100]}"
             ) from exc
 
-    async def _call_with_retry(self, prompt: str, image: Image.Image, context: str) -> object:
+    async def _call_with_retry(
+        self, prompt: str, image: Image.Image, context: str
+    ) -> object:
         """
         Call Gemini with exponential backoff on 429 rate-limit errors.
         Retries up to 3 times: 30s → 60s waits.
@@ -137,13 +140,19 @@ class GeminiVisionProvider(VisionProvider):
                 return self._model.generate_content([prompt, image])
             except Exception as exc:
                 err_str = str(exc).lower()
-                is_rate_limit = "429" in str(exc) or "quota" in err_str or "rate" in err_str
+                is_rate_limit = (
+                    "429" in str(exc) or "quota" in err_str or "rate" in err_str
+                )
 
                 if is_rate_limit and attempt < 2:
-                    wait_secs = 30 * (2 ** attempt)
+                    wait_secs = 30 * (2**attempt)
                     logger.warning(
                         "gemini_vision_rate_limited",
-                        extra={"context": context, "attempt": attempt + 1, "wait_secs": wait_secs},
+                        extra={
+                            "context": context,
+                            "attempt": attempt + 1,
+                            "wait_secs": wait_secs,
+                        },
                     )
                     last_exc = exc
                     await asyncio.sleep(wait_secs)
@@ -166,7 +175,9 @@ class GeminiVisionProvider(VisionProvider):
         )
 
         image = self._load_image(image_path)
-        response = await self._call_with_retry(DAMAGE_ANALYSIS_PROMPT, image, "analyze_damage")
+        response = await self._call_with_retry(
+            DAMAGE_ANALYSIS_PROMPT, image, "analyze_damage"
+        )
         parsed = self._parse_json_response(response.text, "analyze_damage")
 
         result = DamageResult(
@@ -199,7 +210,9 @@ class GeminiVisionProvider(VisionProvider):
         )
 
         image = self._load_image(image_path)
-        response = await self._call_with_retry(BRAND_CLASSIFICATION_PROMPT, image, "classify_brand")
+        response = await self._call_with_retry(
+            BRAND_CLASSIFICATION_PROMPT, image, "classify_brand"
+        )
         parsed = self._parse_json_response(response.text, "classify_brand")
 
         brand_raw = parsed.get("brand")

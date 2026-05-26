@@ -25,7 +25,9 @@ class A1ConversationAgent(BaseAgent):
     """
 
     def __init__(self, llm) -> None:
-        super().__init__(name="a1_conversation", description="Passenger conversation agent")
+        super().__init__(
+            name="a1_conversation", description="Passenger conversation agent"
+        )
         self._llm = llm
 
     def _build_analysis_context(self, state: ClaimState) -> str:
@@ -35,17 +37,26 @@ class A1ConversationAgent(BaseAgent):
             parts.append(f"- Damage types detected: {', '.join(state.damage_types)}")
         if state.severity_score > 0:
             severity_label = (
-                "minor" if state.severity_score < 0.35
-                else "moderate" if state.severity_score < 0.65
-                else "severe" if state.severity_score < 0.9
-                else "total loss"
+                "minor"
+                if state.severity_score < 0.35
+                else (
+                    "moderate"
+                    if state.severity_score < 0.65
+                    else "severe" if state.severity_score < 0.9 else "total loss"
+                )
             )
-            parts.append(f"- Damage severity: {severity_label} ({state.severity_score:.0%})")
+            parts.append(
+                f"- Damage severity: {severity_label} ({state.severity_score:.0%})"
+            )
         if state.brand_detected:
-            luxury_note = " (luxury brand — 1.5× compensation applies)" if state.is_luxury else ""
+            luxury_note = (
+                " (luxury brand — 1.5× compensation applies)" if state.is_luxury else ""
+            )
             parts.append(f"- Bag brand: {state.brand_detected}{luxury_note}")
         if state.compensation_estimate_usd > 0:
-            parts.append(f"- Estimated compensation: ${state.compensation_estimate_usd:.2f} USD")
+            parts.append(
+                f"- Estimated compensation: ${state.compensation_estimate_usd:.2f} USD"
+            )
         if state.flight_number:
             parts.append(f"- Flight number from tag: {state.flight_number}")
         if state.pnr:
@@ -60,9 +71,13 @@ class A1ConversationAgent(BaseAgent):
         if state.routing_lane == 1 and state.voucher_code:
             parts.append(f"- Claim decision: APPROVED (Lane 1)")
             parts.append(f"- Voucher code: {state.voucher_code}")
-            parts.append(f"- Final compensation: ${state.final_compensation_usd:.2f} USD")
+            parts.append(
+                f"- Final compensation: ${state.final_compensation_usd:.2f} USD"
+            )
         elif state.routing_lane == 2:
-            parts.append(f"- Claim decision: UNDER REVIEW (Lane 2 — exceeds auto-approval threshold)")
+            parts.append(
+                f"- Claim decision: UNDER REVIEW (Lane 2 — exceeds auto-approval threshold)"
+            )
 
         if not parts:
             return ""
@@ -111,7 +126,9 @@ class A1ConversationAgent(BaseAgent):
                     {"claim_id": state.claim_id or "N/A"},
                 )
             else:
-                logger.warning("a1_result_step_no_lane", extra={"session_id": state.session_id})
+                logger.warning(
+                    "a1_result_step_no_lane", extra={"session_id": state.session_id}
+                )
                 return steps.get("tag_photo_received", "")
 
         has_damage_images = any("tag" not in p.lower() for p in state.image_paths)
@@ -119,7 +136,11 @@ class A1ConversationAgent(BaseAgent):
 
         # Check image presence BEFORE checking conversation_step — a passenger may
         # upload photos at ANY step including "greeting" (skipping text entirely).
-        if has_tag_images and state.conversation_step in ("tag_photo", "confirm", "damage_photos"):
+        if has_tag_images and state.conversation_step in (
+            "tag_photo",
+            "confirm",
+            "damage_photos",
+        ):
             return steps.get("tag_photo_received", steps.get("confirm", ""))
 
         if has_damage_images:
@@ -129,7 +150,9 @@ class A1ConversationAgent(BaseAgent):
         # Text-only turn — use normal step prompt
         return steps.get(state.conversation_step, steps.get("greeting", ""))
 
-    def _build_messages(self, state: ClaimState, step_prompt: str, system_prompt: str) -> List[dict]:
+    def _build_messages(
+        self, state: ClaimState, step_prompt: str, system_prompt: str
+    ) -> List[dict]:
         messages = [{"role": "system", "content": system_prompt}]
 
         if state.conversation_history:
@@ -143,10 +166,12 @@ class A1ConversationAgent(BaseAgent):
             messages.append({"role": "user", "content": analysis_context})
 
         if step_prompt:
-            messages.append({
-                "role": "user",
-                "content": f"[INSTRUCTION — do not repeat this to the passenger]: {step_prompt}",
-            })
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"[INSTRUCTION — do not repeat this to the passenger]: {step_prompt}",
+                }
+            )
 
         return messages
 
@@ -204,7 +229,9 @@ class A1ConversationAgent(BaseAgent):
 
         try:
             prompts = PromptLoader.load("a1_conversation")
-            system_prompt = prompts.get("system", "You are a helpful airline assistant.")
+            system_prompt = prompts.get(
+                "system", "You are a helpful airline assistant."
+            )
             step_prompt = self._get_step_prompt(state, prompts)
             messages = self._build_messages(state, step_prompt, system_prompt)
 
@@ -219,7 +246,9 @@ class A1ConversationAgent(BaseAgent):
             if "[NO_CLAIM]" in reply:
                 reply = reply.replace("[NO_CLAIM]", "").strip()
                 state.conversation_ended = True
-                logger.info("a1_no_claim_detected", extra={"session_id": state.session_id})
+                logger.info(
+                    "a1_no_claim_detected", extra={"session_id": state.session_id}
+                )
 
             state.a1_response = reply
             state.conversation_step = self._advance_step(state)

@@ -172,6 +172,38 @@ class SupabaseDBProvider(DBProvider):
 
         return response.data[0]
 
+    async def get_claims_by_status(self, status: str) -> List[Dict[str, Any]]:
+        """
+        Return all claims with the given status, ordered newest first.
+
+        Called by GET /claims/pending to populate the agent dashboard.
+
+        Args:
+            status: Status to filter by e.g. 'AWAITING_REVIEW'.
+
+        Returns:
+            List of claim dicts, empty list if none found.
+
+        Raises:
+            Exception: Re-raised from supabase-py on network/auth error.
+        """
+        logger.info("supabase_get_claims_by_status", extra={"status": status})
+
+        response = (
+            self._client.table("claims")
+            .select("*")
+            .eq("status", status)
+            .order("created_at", desc=True)
+            .execute()
+        )
+
+        claims: List[Dict[str, Any]] = response.data or []
+        logger.info(
+            "supabase_get_claims_by_status_ok",
+            extra={"status": status, "count": len(claims)},
+        )
+        return claims
+
     async def get_claim_count(self, pnr: str, days: int = 30) -> int:
         """
         Count how many claims a passenger (PNR) has filed in the last N days.

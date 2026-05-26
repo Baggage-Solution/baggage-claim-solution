@@ -127,9 +127,7 @@ class A2VisionAgent(BaseAgent):
             # Gemini on damage photos that were already analysed in the damage-photo
             # turn when the frontend resends all paths on the tag-photo turn.
             already_processed = set(state.processed_damage_paths)
-            damage_photos = [
-                p for p in all_damage_photos if p not in already_processed
-            ]
+            damage_photos = [p for p in all_damage_photos if p not in already_processed]
 
             if not damage_photos:
                 logger.info(

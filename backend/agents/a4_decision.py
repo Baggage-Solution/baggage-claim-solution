@@ -209,7 +209,11 @@ class A4DecisionAgent(BaseAgent):
         # When images ARE present: reject if severity=0.0 AND no damage labels.
         # This catches undamaged bags uploaded through the full flow.
         # Using AND (not OR) so tests that set severity>0 without damage_types pass.
-        if state.image_paths and state.severity_score < _MIN_DAMAGE_SEVERITY and not state.damage_types:
+        if (
+            state.image_paths
+            and state.severity_score < _MIN_DAMAGE_SEVERITY
+            and not state.damage_types
+        ):
             logger.warning(
                 "a4_no_damage_detected",
                 extra={
