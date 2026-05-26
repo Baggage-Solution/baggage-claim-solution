@@ -24,6 +24,10 @@ import { useCallback, useRef, useState } from 'react'
  * Without echoing A2/A3 results, the confirm turn would start with blank
  * damage_types and severity=0, causing A4 to always route to Lane 1 with $0
  * compensation regardless of the actual damage.
+ *
+ * T-018 addition:
+ *   airport + terminal context is forwarded to the backend on every request
+ *   so A1 can include location context in its greeting when QR auto-start fires.
  */
 
 const BACKEND = 'http://localhost:8000'
@@ -44,7 +48,12 @@ function userMsg(text, extra = {}) {
   return { id: crypto.randomUUID(), sender: 'user', text, timestamp: nowTime(), ...extra }
 }
 
-export function useClaimFlow() {
+/**
+ * @param {object} options
+ * @param {string|null} options.airport  - Airport context from QR URL param (T-018)
+ * @param {string|null} options.terminal - Terminal context from QR URL param (T-018)
+ */
+export function useClaimFlow({ airport = null, terminal = null } = {}) {
   const sessionId = useRef(makeSessionId())
   const claimIdRef = useRef(null)
   const conversationHistory = useRef([])
@@ -112,6 +121,9 @@ export function useClaimFlow() {
       image_paths: allUploadedPaths.current,
       conversation_history: conversationHistory.current,
       conversation_step: step,
+      // T-018: forward QR airport/terminal context to backend
+      airport_context: airport,
+      terminal_context: terminal,
       // Echo all persisted state back to backend
       ...echoedState.current,
     }
@@ -153,13 +165,16 @@ export function useClaimFlow() {
       console.error('[useClaimFlow] webhook error:', err)
       return null
     }
-  }, [step])
+  }, [step, airport, terminal])
 
   const handleSendText = useCallback(
     async (text) => {
       if (!text.trim() || isLoading || inputDisabled) return
 
-      appendMessages(userMsg(text))
+      // Don't render the QR auto-start sentinel message as a user bubble
+      if (!text.startsWith('[QR_AUTO_START]')) {
+        appendMessages(userMsg(text))
+      }
       setIsLoading(true)
 
       const response = await callWebhook(text)

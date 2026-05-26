@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from backend.api.routes import decision, health, webhook
+from backend.api.routes import decision, health, qr, webhook
 from backend.config import get_settings
 from backend.core.logging import configure_logging
 from backend.core.middleware import RequestContextMiddleware
@@ -34,6 +34,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(webhook.router)
 app.include_router(decision.router)
+app.include_router(qr.router)  # T-018 — QR code generation
 
 # ── Static file serving — uploaded claim photos ───────────────────────────────
 # Serves damage + bag tag photos at /uploads/{claim_id}/{filename}

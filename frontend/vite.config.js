@@ -12,6 +12,7 @@ export default defineConfig({
       '/claims':   'http://localhost:8000',   // dashboard pending claims + images
       '/decision': 'http://localhost:8000',   // agent approve / reject
       '/uploads':  'http://localhost:8000',   // serve stored claim photos
+      '/qr':       'http://localhost:8000',   // T-018 — QR code generation
     },
   },
 })
