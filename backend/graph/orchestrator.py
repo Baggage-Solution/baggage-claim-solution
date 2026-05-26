@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+import os
+import shutil
+from typing import Optional
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -11,6 +13,65 @@ from backend.graph.state import ClaimState
 logger = logging.getLogger(__name__)
 
 _checkpointer: MemorySaver = MemorySaver()
+
+
+def _move_pending_uploads(claim_id: str) -> None:
+    """
+    Move uploaded photos from data/uploads/pending/ → data/uploads/{claim_id}/
+    after A4 has finalized the claim and assigned a claim_id.
+
+    Why this is needed:
+    Photos are uploaded before the claim_id exists (passenger uploads during
+    the conversation, A4 generates the claim_id only at the end). The storage
+    provider saves them under data/uploads/pending/ as a staging area.
+    Once the claim is finalized, files must live under the claim_id folder
+    so GET /claims/{claim_id}/images can find and serve them to the dashboard.
+
+    Phase 2 swap: replace local shutil.move with R2/S3 copy + delete calls.
+    The claim_id is available at this point so the destination key is known.
+
+    Args:
+        claim_id: The CLM-YYYYMMDD-XXXX identifier assigned by A4.
+    """
+    pending_dir = os.path.join("data", "uploads", "pending")
+    claim_dir = os.path.join("data", "uploads", claim_id)
+
+    if not os.path.exists(pending_dir):
+        logger.debug(
+            "pending_uploads_dir_not_found",
+            extra={"pending_dir": pending_dir},
+        )
+        return
+
+    files = [
+        f
+        for f in os.listdir(pending_dir)
+        if os.path.isfile(os.path.join(pending_dir, f))
+    ]
+
+    if not files:
+        logger.debug("pending_uploads_empty", extra={"claim_id": claim_id})
+        return
+
+    os.makedirs(claim_dir, exist_ok=True)
+
+    moved = []
+    for filename in files:
+        src = os.path.join(pending_dir, filename)
+        dst = os.path.join(claim_dir, filename)
+        shutil.move(src, dst)
+        moved.append(filename)
+
+    logger.info(
+        "uploads_moved_to_claim",
+        extra={
+            "claim_id": claim_id,
+            "count": len(moved),
+            "files": moved,
+            "src": pending_dir,
+            "dst": claim_dir,
+        },
+    )
 
 
 def _build_graph() -> StateGraph:
@@ -47,31 +108,37 @@ def _build_graph() -> StateGraph:
     async def a1_text_node(state: ClaimState) -> ClaimState:
         from backend.agents.a1_conversation import A1ConversationAgent
         from backend.dependencies import provide_llm
+
         return await A1ConversationAgent(llm=provide_llm()).handle(state, [])
 
     async def a2_node(state: ClaimState) -> ClaimState:
         from backend.agents.a2_vision import A2VisionAgent
         from backend.dependencies import provide_vision
+
         return await A2VisionAgent(vision=provide_vision()).handle(state, [])
 
     async def a3_node(state: ClaimState) -> ClaimState:
         from backend.agents.a3_ocr import A3OCRAgent
         from backend.dependencies import provide_ocr
+
         return await A3OCRAgent(ocr=provide_ocr()).handle(state, [])
 
     async def a1_image_node(state: ClaimState) -> ClaimState:
         from backend.agents.a1_conversation import A1ConversationAgent
         from backend.dependencies import provide_llm
+
         return await A1ConversationAgent(llm=provide_llm()).handle(state, [])
 
     async def a4_node(state: ClaimState) -> ClaimState:
         from backend.agents.a4_decision import A4DecisionAgent
         from backend.dependencies import provide_db
+
         return await A4DecisionAgent(db=provide_db()).handle(state, [])
 
     async def a5_node(state: ClaimState) -> ClaimState:
         from backend.agents.a5_notification import A5NotificationAgent
         from backend.dependencies import provide_db
+
         return await A5NotificationAgent(db=provide_db()).handle(state, [])
 
     def _route_after_a1_image(state: ClaimState) -> str:
@@ -134,11 +201,15 @@ def _build_graph() -> StateGraph:
     graph.add_node("a5", a5_node)
 
     graph.add_edge(START, "router")
-    graph.add_conditional_edges("router", _route_from_router, {"a1_text": "a1_text", "a2": "a2"})
+    graph.add_conditional_edges(
+        "router", _route_from_router, {"a1_text": "a1_text", "a2": "a2"}
+    )
     graph.add_edge("a1_text", END)
     graph.add_edge("a2", "a3")
     graph.add_edge("a3", "a1_image")
-    graph.add_conditional_edges("a1_image", _route_after_a1_image, {"a4": "a4", "end": END})
+    graph.add_conditional_edges(
+        "a1_image", _route_after_a1_image, {"a4": "a4", "end": END}
+    )
     graph.add_conditional_edges("a4", _route_after_a4, {"a5": "a5", "end": END})
     graph.add_edge("a5", END)
 
@@ -202,8 +273,8 @@ class ClaimOrchestrator:
             image_paths=image_paths or [],
             conversation_history=conversation_history or [],
             conversation_step=conversation_step,
-            # Seed A2 results from echoed frontend state
             conversation_ended=conversation_ended,
+            # Seed A2 results from echoed frontend state
             processed_damage_paths=processed_damage_paths or [],
             damage_types=damage_types or [],
             severity_score=severity_score,
@@ -245,6 +316,14 @@ class ClaimOrchestrator:
                 )
             else:
                 state = result
+
+            # ── Move pending uploads to claim folder ──────────────────────────
+            # A4 assigns claim_id during this run. Photos were stored under
+            # data/uploads/pending/ because the claim_id wasn't known at upload
+            # time. Now that we have it, move files to data/uploads/{claim_id}/
+            # so GET /claims/{claim_id}/images finds them on the dashboard.
+            if state.claim_id:
+                _move_pending_uploads(state.claim_id)
 
             state.execution_completed = True
 

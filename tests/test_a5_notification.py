@@ -2,17 +2,19 @@
 Tests for A5NotificationAgent — T-015.
 All DB calls and SSE pushes are mocked — no real Supabase or HTTP needed.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.agents.a5_notification import A5NotificationAgent, get_or_create_queue
+from backend.agents.a5_notification import (A5NotificationAgent,
+                                            get_or_create_queue)
 from backend.graph.state import ClaimState
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def make_db() -> MagicMock:
     """Create a mock DBProvider."""
@@ -41,6 +43,7 @@ def make_state(**kwargs) -> ClaimState:
 
 # ── Lane 1 tests ──────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_lane1_generates_voucher():
     """Lane 1: A5 generates a VCH-XXXXXXXX voucher code."""
@@ -51,7 +54,7 @@ async def test_lane1_generates_voucher():
 
     assert result.voucher_code is not None
     assert result.voucher_code.startswith("VCH-")
-    assert len(result.voucher_code) == 12   # VCH- + 8 chars
+    assert len(result.voucher_code) == 12  # VCH- + 8 chars
     assert result.error is None
 
 
@@ -75,9 +78,7 @@ async def test_lane1_updates_db_status_approved():
 
     await agent.handle(state, [])
 
-    db.update_claim_status.assert_called_once_with(
-        "CLM-20260522-TEST", "APPROVED"
-    )
+    db.update_claim_status.assert_called_once_with("CLM-20260522-TEST", "APPROVED")
 
 
 @pytest.mark.asyncio
@@ -108,6 +109,7 @@ async def test_lane1_sets_result_step():
 
 
 # ── Lane 2 tests ──────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_lane2_sets_hitl_queued():
@@ -174,6 +176,7 @@ async def test_lane2_sets_result_step():
 
 # ── Error handling tests ──────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_a5_db_failure_does_not_crash():
     """A5 continues gracefully if DB update fails."""
@@ -189,7 +192,7 @@ async def test_a5_db_failure_does_not_crash():
     # Should still generate voucher and push SSE even if DB fails
     assert result.voucher_code is not None
     assert result.notification_sent is True
-    assert result.error is None   # A5 handles DB failure gracefully
+    assert result.error is None  # A5 handles DB failure gracefully
 
 
 @pytest.mark.asyncio
