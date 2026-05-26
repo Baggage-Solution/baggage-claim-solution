@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import os
 from typing import List, Optional
 
 from fastapi import (APIRouter, File, Form, Header, HTTPException, Request,
                      UploadFile)
+from fastapi.responses import StreamingResponse
 
 from backend.api.schemas.claim_request import WebhookRequest
 from backend.api.schemas.claim_response import WebhookResponse
@@ -183,3 +186,63 @@ async def upload_image(
     )
 
     return {"path": path, "filename": filename}
+
+
+@router.get("/events/{session_id}")
+async def sse_events(session_id: str):
+    """
+    Server-Sent Events endpoint for simulator real-time updates.
+
+    The React simulator connects to this endpoint after sending a message.
+    A5NotificationAgent pushes lane1_result or lane2_result events here
+    after the claim pipeline completes. The simulator reads these events
+    and renders the appropriate result card (voucher or 'Under Review').
+
+    POC: Replaces real WhatsApp Cloud API push notification.
+    Production: Remove SSE and use Meta Cloud API POST to passenger's phone.
+
+    Args:
+        session_id: Simulator session to subscribe to events for.
+
+    Returns:
+        StreamingResponse with text/event-stream content type.
+        Events are JSON objects with a 'type' field:
+          - connected:    initial handshake on connection open
+          - heartbeat:    keep-alive ping every 30s
+          - lane1_result: auto-approved — includes voucher_code, compensation
+          - lane2_result: staff review — includes claim_id, message
+    """
+    from backend.agents.a5_notification import get_or_create_queue
+
+    queue = get_or_create_queue(session_id)
+
+    async def event_generator():
+        """Yield SSE-formatted events from the session queue."""
+        # Send initial connection confirmation to simulator
+        yield f"data: {json.dumps({'type': 'connected', 'session_id': session_id})}\n\n"
+
+        while True:
+            try:
+                # Wait up to 30s for next event — keeps connection alive
+                event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                yield f"data: {json.dumps(event)}\n\n"
+            except asyncio.TimeoutError:
+                # Send heartbeat to keep connection alive without sending real data
+                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+            except asyncio.CancelledError:
+                # Client disconnected — stop streaming
+                logger.info(
+                    "sse_client_disconnected",
+                    extra={"session_id": session_id},
+                )
+                break
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disables nginx buffering for SSE
+        },
+    )

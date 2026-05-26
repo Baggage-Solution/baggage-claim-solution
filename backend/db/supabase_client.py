@@ -112,9 +112,7 @@ class SupabaseDBProvider(DBProvider):
         response = self._client.table("claims").insert(claim_data).execute()
 
         if not response.data:
-            raise RuntimeError(
-                f"Supabase insert returned no data for claim {claim_id}"
-            )
+            raise RuntimeError(f"Supabase insert returned no data for claim {claim_id}")
 
         saved_id: str = response.data[0]["id"]
         logger.info("supabase_save_claim_ok", extra={"claim_id": saved_id})
@@ -166,17 +164,10 @@ class SupabaseDBProvider(DBProvider):
         """
         logger.debug("supabase_get_claim", extra={"claim_id": claim_id})
 
-        response = (
-            self._client.table("claims")
-            .select("*")
-            .eq("id", claim_id)
-            .execute()
-        )
+        response = self._client.table("claims").select("*").eq("id", claim_id).execute()
 
         if not response.data:
-            logger.debug(
-                "supabase_get_claim_not_found", extra={"claim_id": claim_id}
-            )
+            logger.debug("supabase_get_claim_not_found", extra={"claim_id": claim_id})
             return None
 
         return response.data[0]
@@ -198,9 +189,7 @@ class SupabaseDBProvider(DBProvider):
         Raises:
             Exception: Re-raised from supabase-py on network/auth error.
         """
-        logger.debug(
-            "supabase_get_claim_count", extra={"pnr": pnr, "days": days}
-        )
+        logger.debug("supabase_get_claim_count", extra={"pnr": pnr, "days": days})
 
         # Supabase supports Postgres interval syntax directly
         response = (
