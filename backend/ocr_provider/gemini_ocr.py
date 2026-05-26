@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -168,6 +169,50 @@ class GeminiOCRProvider(OCRProvider):
         )
         return None
 
+    async def _call_with_retry(self, image: Image.Image) -> object:
+        """
+        Call Gemini generate_content with exponential backoff on 429 rate-limit errors.
+
+        Free tier limit for gemini-2.5-flash is 5 req/min. On a tag-photo turn the
+        pipeline makes up to 4 Gemini calls in quick succession (A2 × 2 + A3 × 1 + A1 × 1),
+        which can hit this cap. With the processed_damage_paths fix A2 is skipped on the
+        tag turn, bringing it down to 2 calls — but this retry is kept as a safety net.
+
+        Args:
+            image: PIL Image to send.
+
+        Returns:
+            Gemini response object.
+
+        Raises:
+            Exception: Re-raises after all retries are exhausted, or immediately
+                       for non-rate-limit errors.
+        """
+        last_exc: Exception | None = None
+
+        for attempt in range(3):
+            try:
+                return self._model.generate_content([BAG_TAG_EXTRACTION_PROMPT, image])
+            except Exception as exc:
+                err_str = str(exc).lower()
+                is_rate_limit = "429" in str(exc) or "quota" in err_str or "rate" in err_str
+
+                if is_rate_limit and attempt < 2:
+                    wait_secs = 30 * (2 ** attempt)  # 30s → 60s
+                    logger.warning(
+                        "gemini_ocr_rate_limited",
+                        extra={
+                            "attempt": attempt + 1,
+                            "wait_secs": wait_secs,
+                        },
+                    )
+                    last_exc = exc
+                    await asyncio.sleep(wait_secs)
+                else:
+                    raise
+
+        raise last_exc
+
     async def extract_bag_tag(self, image_path: str) -> TagData:
         """
         Extract flight number, PNR, and bag ID from a bag tag photo.
@@ -176,6 +221,7 @@ class GeminiOCRProvider(OCRProvider):
         parses the JSON response, and validates all field formats with regex.
         Low confidence (< 0.7) signals A3 to set re_request_tag = True,
         prompting the passenger to retake the photo.
+        Retries up to 3 times on 429 rate-limit errors with exponential backoff.
 
         Args:
             image_path: Path to the bag tag photo (JPG/PNG/WEBP).
@@ -195,7 +241,7 @@ class GeminiOCRProvider(OCRProvider):
 
         try:
             image = self._load_image(image_path)
-            response = self._model.generate_content([BAG_TAG_EXTRACTION_PROMPT, image])
+            response = await self._call_with_retry(image)
             parsed = self._parse_json_response(response.text)
 
             # Normalise and validate each field

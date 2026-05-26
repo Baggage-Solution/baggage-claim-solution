@@ -43,6 +43,12 @@ class A2VisionAgent(BaseAgent):
         A3 handles paths containing 'tag' in the filename.
         A2 processes everything else.
 
+        The filename check is reliable because webhook.py always prefixes the
+        photo_type onto the filename before saving:
+            filename = f"{photo_type}_{file.filename}"
+        So tag uploads are always saved as "tag_<name>" and damage uploads as
+        "damage_<name>". This is controlled by the backend, not the user.
+
         Args:
             image_path: Path string to check.
 
@@ -69,14 +75,21 @@ class A2VisionAgent(BaseAgent):
 
     async def handle(self, state: ClaimState, tasks: List[str]) -> ClaimState:
         """
-        Run vision analysis on all damage photos in state.image_paths.
+        Run vision analysis on all NEW damage photos in state.image_paths.
+
+        The frontend accumulates all uploaded paths across turns and resends
+        them every request (so A4 always has the full set for fraud checks).
+        A2 uses state.processed_damage_paths to skip images it already analysed
+        in a prior turn, preventing redundant Gemini API calls.
 
         Steps:
         1. Filter image_paths to damage photos (paths without 'tag' in name).
-        2. For each damage photo: analyze_damage() → aggregate damage_types + severity.
-        3. classify_brand() on first damage photo → brand_detected, is_luxury.
-        4. If confidence too low across all photos → re_request_damage = True.
-        5. Calculate compensation_estimate_usd from max severity_score.
+        2. Skip any that are already in state.processed_damage_paths.
+        3. For each NEW damage photo: analyze_damage() → aggregate damage_types + severity.
+        4. classify_brand() on first NEW damage photo → brand_detected, is_luxury.
+        5. If confidence too low across all new photos → re_request_damage = True.
+        6. Calculate compensation_estimate_usd from max severity_score.
+        7. Add newly processed paths to state.processed_damage_paths.
 
         Args:
             state: Current ClaimState with image_paths from /upload endpoint.
@@ -96,19 +109,42 @@ class A2VisionAgent(BaseAgent):
                 logger.info("a2_skipped", extra={"reason": "no_images"})
                 return state
 
-            # ── Step 1: Filter — damage photos only ───────────────────────────
-            damage_photos = [p for p in state.image_paths if self._is_damage_photo(p)]
+            # ── Step 1: Find all damage photos in this turn ────────────────────
+            all_damage_photos = [
+                p for p in state.image_paths if self._is_damage_photo(p)
+            ]
 
-            if not damage_photos:
+            if not all_damage_photos:
                 logger.info(
                     "a2_skipped",
                     extra={"reason": "no_damage_photos_only_tag"},
                 )
                 return state
 
-            # ── Step 2: Analyse each damage photo ─────────────────────────────
-            all_damage_types: List[str] = []
-            max_severity: float = 0.0
+            # ── Step 2: Filter out already-processed photos ────────────────────
+            # processed_damage_paths is echoed back from the frontend each turn,
+            # seeded from the previous response. This prevents A2 from re-calling
+            # Gemini on damage photos that were already analysed in the damage-photo
+            # turn when the frontend resends all paths on the tag-photo turn.
+            already_processed = set(state.processed_damage_paths)
+            damage_photos = [
+                p for p in all_damage_photos if p not in already_processed
+            ]
+
+            if not damage_photos:
+                logger.info(
+                    "a2_skipped",
+                    extra={
+                        "reason": "all_damage_photos_already_processed",
+                        "count": len(all_damage_photos),
+                    },
+                )
+                return state
+
+            # ── Step 3: Analyse each NEW damage photo ─────────────────────────
+            # Carry forward any results from prior turns
+            all_damage_types: List[str] = list(state.damage_types)
+            max_severity: float = state.severity_score
             max_confidence: float = 0.0
 
             for image_path in damage_photos:
@@ -127,7 +163,7 @@ class A2VisionAgent(BaseAgent):
                     },
                 )
 
-            # ── Step 3: Re-request if all images too blurry ───────────────────
+            # ── Step 4: Re-request if all new images too blurry ───────────────
             if max_confidence < _MIN_ACCEPTABLE_CONFIDENCE:
                 logger.warning(
                     "a2_low_confidence",
@@ -139,16 +175,21 @@ class A2VisionAgent(BaseAgent):
                 state.re_request_damage = True
                 return state
 
-            # ── Step 4: Brand classification (use first damage photo) ──────────
+            # ── Step 5: Brand classification (use first NEW damage photo) ──────
             brand_result = await self._vision.classify_brand(damage_photos[0])
 
-            # ── Step 5: Write all A2 outputs into ClaimState ───────────────────
+            # ── Step 6: Write all A2 outputs into ClaimState ───────────────────
             # Deduplicate damage types — same type may appear across multiple photos
             state.damage_types = list(dict.fromkeys(all_damage_types))
             state.severity_score = round(max_severity, 4)
             state.brand_detected = brand_result.brand
             state.is_luxury = brand_result.is_luxury
             state.compensation_estimate_usd = self._calculate_compensation(max_severity)
+
+            # ── Step 7: Mark these photos as processed ─────────────────────────
+            # Will be included in the response and echoed back by the frontend
+            # next turn to prevent re-analysis.
+            state.processed_damage_paths = list(already_processed) + damage_photos
 
             state.add_debug("a2_images_processed", len(damage_photos))
             state.add_debug("a2_brand_confidence", brand_result.confidence)
