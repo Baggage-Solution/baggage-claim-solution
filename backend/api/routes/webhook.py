@@ -76,6 +76,7 @@ async def webhook(
             conversation_step=payload.conversation_step or "greeting",
             # A2 echoed results
             conversation_ended=payload.conversation_ended or False,
+            no_damage_detected=payload.no_damage_detected or False,
             processed_damage_paths=payload.processed_damage_paths or [],
             damage_types=payload.damage_types or [],
             severity_score=payload.severity_score or 0.0,
@@ -83,6 +84,7 @@ async def webhook(
             is_luxury=payload.is_luxury or False,
             compensation_estimate_usd=payload.compensation_estimate_usd or 0.0,
             # A3 echoed results
+            processed_tag_paths=payload.processed_tag_paths or [],
             flight_number=payload.flight_number,
             pnr=payload.pnr,
             bag_id=payload.bag_id,
@@ -100,6 +102,7 @@ async def webhook(
             re_request_tag=state.re_request_tag,
             re_request_damage=state.re_request_damage,
             conversation_ended=state.conversation_ended,
+            no_damage_detected=state.no_damage_detected,
             # Echo A2 results back
             processed_damage_paths=state.processed_damage_paths,
             damage_types=state.damage_types,
@@ -108,6 +111,7 @@ async def webhook(
             is_luxury=state.is_luxury,
             compensation_estimate_usd=state.compensation_estimate_usd,
             # Echo A3 results back
+            processed_tag_paths=state.processed_tag_paths,
             flight_number=state.flight_number,
             pnr=state.pnr,
             bag_id=state.bag_id,

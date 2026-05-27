@@ -41,12 +41,30 @@ class ClaimState:
     brand_detected: Optional[str] = None
     is_luxury: bool = False
     compensation_estimate_usd: float = 0.0
+    # Set True by A2 when damage photos were successfully analysed (good
+    # confidence) but NO structural damage was found. This is distinct from
+    # re_request_damage (which means "image too blurry, retake it").
+    #
+    # no_damage_detected = "we looked clearly and the bag is fine"
+    # re_request_damage  = "we couldn't see clearly, send a better photo"
+    #
+    # A1 uses this flag to tell the passenger no damage was found and to NOT
+    # advance the conversation to the tag-photo step. The flag is NON-terminal:
+    # the passenger can still upload a different/clearer photo of real damage,
+    # which clears the flag on the next A2 run. Only an explicit passenger
+    # confirmation of "no damage" sets conversation_ended (terminal).
+    no_damage_detected: bool = False
 
     # ── A3 — OCR ───────────────────────────────────────────────────────────────
     flight_number: Optional[str] = None
     pnr: Optional[str] = None
     bag_id: Optional[str] = None
     ocr_confidence: float = 0.0
+    # Tag photos A3 has already run OCR on. Echoed back by the frontend each
+    # turn (mirrors processed_damage_paths for A2). Prevents A3 from making a
+    # redundant Gemini OCR call on the confirm turn, where the frontend resends
+    # the already-scanned tag image along with the damage images.
+    processed_tag_paths: List[str] = field(default_factory=list)
 
     # ── A4 — DECISION ──────────────────────────────────────────────────────────
     routing_lane: Optional[int] = None

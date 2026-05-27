@@ -62,6 +62,7 @@ export function useClaimFlow({ airport = null, terminal = null } = {}) {
   // Echoed state — all persisted across turns and sent back each request
   const echoedState = useRef({
     conversation_ended: false,
+    no_damage_detected: false,
     processed_damage_paths: [],
     // A2 results
     damage_types: [],
@@ -70,6 +71,7 @@ export function useClaimFlow({ airport = null, terminal = null } = {}) {
     is_luxury: false,
     compensation_estimate_usd: 0.0,
     // A3 results
+    processed_tag_paths: [],
     flight_number: null,
     pnr: null,
     bag_id: null,
@@ -148,12 +150,14 @@ export function useClaimFlow({ airport = null, terminal = null } = {}) {
       // Update all echoed fields from response
       echoedState.current = {
         conversation_ended: data.conversation_ended ?? echoedState.current.conversation_ended,
+        no_damage_detected: data.no_damage_detected ?? echoedState.current.no_damage_detected,
         processed_damage_paths: data.processed_damage_paths ?? echoedState.current.processed_damage_paths,
         damage_types: data.damage_types ?? echoedState.current.damage_types,
         severity_score: data.severity_score ?? echoedState.current.severity_score,
         brand_detected: data.brand_detected ?? echoedState.current.brand_detected,
         is_luxury: data.is_luxury ?? echoedState.current.is_luxury,
         compensation_estimate_usd: data.compensation_estimate_usd ?? echoedState.current.compensation_estimate_usd,
+        processed_tag_paths: data.processed_tag_paths ?? echoedState.current.processed_tag_paths,
         flight_number: data.flight_number ?? echoedState.current.flight_number,
         pnr: data.pnr ?? echoedState.current.pnr,
         bag_id: data.bag_id ?? echoedState.current.bag_id,
@@ -241,7 +245,10 @@ export function useClaimFlow({ airport = null, terminal = null } = {}) {
   )
 
   function _handleResult(response) {
-    // No damage confirmed — lock the chat, no claim filed
+    // Terminal — passenger confirmed no damage / nothing to claim. Lock input.
+    // NOTE: no_damage_detected (a single clear photo showing no damage) is NOT
+    // terminal — the input stays OPEN so the passenger can send a real damage
+    // photo or confirm the bag is fine. Only conversation_ended locks the chat.
     if (response.conversation_ended) {
       setInputDisabled(true)
       setStep('result')

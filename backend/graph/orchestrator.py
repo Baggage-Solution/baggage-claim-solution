@@ -244,6 +244,7 @@ class ClaimOrchestrator:
         conversation_history: list | None = None,
         conversation_step: str = "greeting",
         conversation_ended: bool = False,
+        no_damage_detected: bool = False,
         # A2 echoed results
         processed_damage_paths: list[str] | None = None,
         damage_types: list[str] | None = None,
@@ -252,6 +253,7 @@ class ClaimOrchestrator:
         is_luxury: bool = False,
         compensation_estimate_usd: float = 0.0,
         # A3 echoed results
+        processed_tag_paths: list[str] | None = None,
         flight_number: str | None = None,
         pnr: str | None = None,
         bag_id: str | None = None,
@@ -274,6 +276,7 @@ class ClaimOrchestrator:
             conversation_history=conversation_history or [],
             conversation_step=conversation_step,
             conversation_ended=conversation_ended,
+            no_damage_detected=no_damage_detected,
             # Seed A2 results from echoed frontend state
             processed_damage_paths=processed_damage_paths or [],
             damage_types=damage_types or [],
@@ -282,6 +285,7 @@ class ClaimOrchestrator:
             is_luxury=is_luxury,
             compensation_estimate_usd=compensation_estimate_usd,
             # Seed A3 results from echoed frontend state
+            processed_tag_paths=processed_tag_paths or [],
             flight_number=flight_number,
             pnr=pnr,
             bag_id=bag_id,

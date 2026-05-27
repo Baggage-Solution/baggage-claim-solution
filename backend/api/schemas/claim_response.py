@@ -17,6 +17,9 @@ class WebhookResponse(BaseModel):
     # True when conversation is over with no claim filed (no damage confirmed).
     # Frontend uses this to lock the input permanently.
     conversation_ended: bool = False
+    # True when A2 found a clear photo with no damage. Non-terminal — the
+    # passenger can still send a real damage photo. Frontend echoes it back.
+    no_damage_detected: bool = False
 
     # ── Echoed state fields ────────────────────────────────────────────────────
     # These are returned so the frontend can echo them back on the next request,
@@ -31,6 +34,7 @@ class WebhookResponse(BaseModel):
     compensation_estimate_usd: float = 0.0
 
     # A3 results
+    processed_tag_paths: List[str] = []
     flight_number: Optional[str] = None
     pnr: Optional[str] = None
     bag_id: Optional[str] = None

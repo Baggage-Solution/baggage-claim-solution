@@ -20,6 +20,11 @@ class A1ConversationAgent(BaseAgent):
     already has damage_types, severity_score, brand_detected, flight_number
     etc. populated when A1 builds its LLM messages.
 
+    A1 is the single point that turns the structured analysis from A2/A3/A4
+    into a natural-language reply. It must therefore be the one place that
+    reasons about *what the analysis actually says* — including the case where
+    a photo was clear but showed no damage. It never assumes damage exists.
+
     Provider: LLMProvider (injected).
     Prompt file: backend/prompts/a1_conversation.json
     """
@@ -31,86 +36,121 @@ class A1ConversationAgent(BaseAgent):
         self._llm = llm
 
     def _build_analysis_context(self, state: ClaimState) -> str:
+        """
+        Build the [ANALYSIS RESULTS] block fed to the LLM.
+
+        CRITICAL: when damage photos were analysed but no damage was found, we
+        must say so EXPLICITLY. Previously this method returned only positive
+        facts (brand, flight, etc.) and silently omitted any damage line when
+        none was found — so on a no-damage turn the LLM saw "Bag brand: X" with
+        no damage info and hallucinated damage / asked for the bag tag. The
+        explicit "No visible damage" line is what lets the model respond truthfully.
+        """
         parts = []
 
-        if state.damage_types:
+        # ── Damage verdict — ALWAYS state it when a photo was analysed ─────────
+        if state.no_damage_detected:
+            parts.append(
+                "- Damage assessment: NO visible structural damage detected. "
+                "The bag appears intact (only cosmetic marks, if any)."
+            )
+        elif state.damage_types:
             parts.append(f"- Damage types detected: {', '.join(state.damage_types)}")
-        if state.severity_score > 0:
-            severity_label = (
-                "minor"
-                if state.severity_score < 0.35
-                else (
-                    "moderate"
-                    if state.severity_score < 0.65
-                    else "severe" if state.severity_score < 0.9 else "total loss"
+            if state.severity_score > 0:
+                severity_label = (
+                    "minor"
+                    if state.severity_score < 0.35
+                    else (
+                        "moderate"
+                        if state.severity_score < 0.65
+                        else "severe" if state.severity_score < 0.9 else "total loss"
+                    )
                 )
-            )
-            parts.append(
-                f"- Damage severity: {severity_label} ({state.severity_score:.0%})"
-            )
-        if state.brand_detected:
-            luxury_note = (
-                " (luxury brand — 1.5× compensation applies)" if state.is_luxury else ""
-            )
-            parts.append(f"- Bag brand: {state.brand_detected}{luxury_note}")
-        if state.compensation_estimate_usd > 0:
-            parts.append(
-                f"- Estimated compensation: ${state.compensation_estimate_usd:.2f} USD"
-            )
-        if state.flight_number:
-            parts.append(f"- Flight number from tag: {state.flight_number}")
-        if state.pnr:
-            parts.append(f"- PNR from tag: {state.pnr}")
-        if state.bag_id:
-            parts.append(f"- Bag ID from tag: {state.bag_id}")
-        if state.ocr_confidence > 0 and not state.flight_number and not state.pnr:
-            parts.append(
-                f"- Bag tag scanned but flight/PNR not readable "
-                f"(confidence: {state.ocr_confidence:.0%})"
-            )
+                parts.append(
+                    f"- Damage severity: {severity_label} ({state.severity_score:.0%})"
+                )
+
+        # Brand / compensation / tag facts — only meaningful when a claim proceeds.
+        if not state.no_damage_detected:
+            if state.brand_detected:
+                luxury_note = (
+                    " (luxury brand — 1.5× compensation applies)"
+                    if state.is_luxury
+                    else ""
+                )
+                parts.append(f"- Bag brand: {state.brand_detected}{luxury_note}")
+            if state.compensation_estimate_usd > 0:
+                parts.append(
+                    f"- Estimated compensation: ${state.compensation_estimate_usd:.2f} USD"
+                )
+            if state.flight_number:
+                parts.append(f"- Flight number from tag: {state.flight_number}")
+            if state.pnr:
+                parts.append(f"- PNR from tag: {state.pnr}")
+            if state.bag_id:
+                parts.append(f"- Bag ID from tag: {state.bag_id}")
+            if (
+                state.ocr_confidence > 0
+                and not state.flight_number
+                and not state.pnr
+            ):
+                parts.append(
+                    f"- Bag tag scanned but flight/PNR not readable "
+                    f"(confidence: {state.ocr_confidence:.0%})"
+                )
+
         if state.routing_lane == 1 and state.voucher_code:
-            parts.append(f"- Claim decision: APPROVED (Lane 1)")
+            parts.append("- Claim decision: APPROVED (Lane 1)")
             parts.append(f"- Voucher code: {state.voucher_code}")
             parts.append(
                 f"- Final compensation: ${state.final_compensation_usd:.2f} USD"
             )
         elif state.routing_lane == 2:
             parts.append(
-                f"- Claim decision: UNDER REVIEW (Lane 2 — exceeds auto-approval threshold)"
+                "- Claim decision: UNDER REVIEW (Lane 2 — exceeds auto-approval threshold)"
             )
 
         if not parts:
             return ""
 
         return (
-            "[ANALYSIS RESULTS — use these facts in your reply, do not ask the passenger for information already captured here]:\n"
-            + "\n".join(parts)
+            "[ANALYSIS RESULTS — use these facts in your reply, do not ask the "
+            "passenger for information already captured here]:\n" + "\n".join(parts)
         )
 
     def _get_step_prompt(self, state: ClaimState, prompts: dict) -> str:
         """
         Determine the correct prompt template for the current conversation step.
 
-        Priority:
-        1. conversation_ended — terminal state, no claim filed
-        2. re_request_tag / re_request_damage — retry prompts
-        3. result step — routing_lane set by A4
-        4. Image received — damage images present regardless of conversation step.
-           Handles frustrated passengers who upload photos without greeting first.
-        5. Normal step prompt for text-only turns
+        Priority (first match wins):
+        1. conversation_ended — terminal state, no claim filed.
+        2. no_damage_detected — clear photo, no damage. Tell passenger, stay put.
+        3. re_request_tag / re_request_damage — blurry image retry prompts.
+        4. result step — routing_lane set by A4 (voucher / under review).
+        5. Image received — damage/tag images present regardless of step.
+           Handles passengers who upload photos without greeting first.
+        6. Normal step prompt for text-only turns.
         """
         steps = prompts.get("steps", {})
 
-        # Terminal state — A4 found no damage OR passenger said no damage
+        # 1. Terminal — passenger explicitly confirmed no damage / nothing to claim.
         if state.conversation_ended:
             return steps.get("no_damage_terminal", "")
 
+        # 2. Clear photo but no damage found. This is NOT terminal — the passenger
+        #    may still have real damage to show — so we ask them to confirm or
+        #    retake, and we do NOT advance to the tag step.
+        if state.no_damage_detected:
+            return steps.get("no_damage_found", "")
+
+        # 3. Blurry image retries.
         if state.re_request_tag:
             return steps.get("re_request_tag", "")
 
         if state.re_request_damage:
             return steps.get("re_request_damage", "")
 
+        # 4. Final result after A4 routing.
         if state.conversation_step == "result":
             if state.routing_lane == 1:
                 return PromptLoader.render(
@@ -134,8 +174,8 @@ class A1ConversationAgent(BaseAgent):
         has_damage_images = any("tag" not in p.lower() for p in state.image_paths)
         has_tag_images = any("tag" in p.lower() for p in state.image_paths)
 
-        # Check image presence BEFORE checking conversation_step — a passenger may
-        # upload photos at ANY step including "greeting" (skipping text entirely).
+        # 5. Check image presence BEFORE the plain step prompt — a passenger may
+        #    upload photos at ANY step including "greeting" (skipping text entirely).
         if has_tag_images and state.conversation_step in (
             "tag_photo",
             "confirm",
@@ -145,9 +185,10 @@ class A1ConversationAgent(BaseAgent):
 
         if has_damage_images:
             # Covers normal damage_photos step AND greeting step (user uploaded immediately).
+            # By this point no_damage_detected is False, so real damage was found.
             return steps.get("damage_photos_received", steps.get("tag_photo", ""))
 
-        # Text-only turn — use normal step prompt
+        # 6. Text-only turn — use normal step prompt.
         return steps.get(state.conversation_step, steps.get("greeting", ""))
 
     def _build_messages(
@@ -179,15 +220,30 @@ class A1ConversationAgent(BaseAgent):
         """
         Advance conversation_step to the next stage.
 
-        Returns current step unchanged for any terminal condition:
-        - conversation_ended (no damage, conversation closed)
-        - re_request flags
-        - already at result
-        - routing_lane set (jumps to result)
+        Returns the current step unchanged (does NOT advance) for any condition
+        where moving forward would be wrong:
+        - conversation_ended (no claim filed) → jump to result (terminal).
+        - no_damage_detected → stay on the current photo step. We must not move
+          to tag_photo: the passenger has not shown any damage yet, so asking
+          for the bag tag would be nonsensical. They either confirm there is no
+          damage (→ conversation_ended next turn) or re-upload a real damage photo.
+        - re_request flags → stay put until a usable photo arrives.
+        - already at result, or routing_lane set → result.
         """
-        # Terminal — no claim filed, conversation is over
+        # Terminal — no claim filed, conversation is over.
         if state.conversation_ended:
             return "result"
+
+        # No damage found — hold on the current step (do not jump to tag_photo).
+        if state.no_damage_detected:
+            # If we were still at greeting (photo-first user), reflect that a
+            # damage photo was received by moving to the damage_photos step, but
+            # never past it.
+            return (
+                "damage_photos"
+                if state.conversation_step == "greeting"
+                else state.conversation_step
+            )
 
         if state.re_request_tag or state.re_request_damage:
             return state.conversation_step
@@ -220,6 +276,7 @@ class A1ConversationAgent(BaseAgent):
                 "session_id": state.session_id,
                 "re_request_tag": state.re_request_tag,
                 "re_request_damage": state.re_request_damage,
+                "no_damage_detected": state.no_damage_detected,
                 "image_count": len(state.image_paths),
                 "has_damage_analysis": bool(state.damage_types),
                 "has_ocr_data": bool(state.flight_number or state.pnr),
@@ -238,14 +295,18 @@ class A1ConversationAgent(BaseAgent):
             reply = await self._llm.chat(messages, temperature=0.3)
 
             # ── Detect no-damage terminal intent ──────────────────────────────
-            # The system prompt instructs A1 to handle "no damage" gracefully.
-            # We detect this by asking A1 to include [NO_CLAIM] in its reply
-            # when it has determined no claim will be filed. We then strip the
-            # marker and set conversation_ended so the frontend locks the input.
-            # This is more reliable than parsing natural language for intent.
+            # The system prompt instructs A1 to emit [NO_CLAIM] when it has
+            # determined the conversation is over with no claim (e.g. the
+            # passenger confirms their bag is fine). We strip the marker and set
+            # conversation_ended so the frontend locks the input.
+            #
+            # This is the TERMINAL no-damage path and is distinct from the
+            # no_damage_detected flag, which only means "this photo showed no
+            # damage" and keeps the conversation open for a retake.
             if "[NO_CLAIM]" in reply:
                 reply = reply.replace("[NO_CLAIM]", "").strip()
                 state.conversation_ended = True
+                state.no_damage_detected = False  # superseded by terminal state
                 logger.info(
                     "a1_no_claim_detected", extra={"session_id": state.session_id}
                 )
@@ -263,6 +324,7 @@ class A1ConversationAgent(BaseAgent):
                     "next_step": state.conversation_step,
                     "reply_length": len(reply),
                     "conversation_ended": state.conversation_ended,
+                    "no_damage_detected": state.no_damage_detected,
                 },
             )
 

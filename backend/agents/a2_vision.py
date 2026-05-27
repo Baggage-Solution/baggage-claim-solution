@@ -17,6 +17,10 @@ _SEVERITY_TO_USD_SCALE = 150.0
 # Below this threshold the passenger is asked to retake the photos.
 _MIN_ACCEPTABLE_CONFIDENCE = 0.4
 
+# Severity at or below this is treated as "no real damage" (cosmetic only).
+# Mirrors A4's _MIN_DAMAGE_SEVERITY so A2 and A4 agree on what counts as damage.
+_NO_DAMAGE_SEVERITY = 0.1
+
 
 class A2VisionAgent(BaseAgent):
     """
@@ -26,7 +30,8 @@ class A2VisionAgent(BaseAgent):
     - Analyse damage photos: identify damage types, severity, brand.
     - Set is_luxury flag for luxury brand bags.
     - Produce initial compensation_estimate_usd.
-    - Set re_request_damage if image quality is too low.
+    - Set re_request_damage if image quality is too low (blurry → retake).
+    - Set no_damage_detected if the photo is clear but the bag is undamaged.
 
     Provider: VisionProvider (injected — never import Gemini directly here).
     Future swap: set VISION_PROVIDER=yolov8 in .env → yolov8_vision.py used instead.
@@ -86,10 +91,12 @@ class A2VisionAgent(BaseAgent):
         1. Filter image_paths to damage photos (paths without 'tag' in name).
         2. Skip any that are already in state.processed_damage_paths.
         3. For each NEW damage photo: analyze_damage() → aggregate damage_types + severity.
-        4. classify_brand() on first NEW damage photo → brand_detected, is_luxury.
-        5. If confidence too low across all new photos → re_request_damage = True.
-        6. Calculate compensation_estimate_usd from max severity_score.
-        7. Add newly processed paths to state.processed_damage_paths.
+        4. If confidence too low → re_request_damage = True (blurry, retake).
+        5. If clear but no damage found → no_damage_detected = True (bag is fine).
+        6. classify_brand() — ONLY when real damage was found (saves a Gemini call
+           on undamaged bags, where brand is irrelevant to the outcome).
+        7. Calculate compensation_estimate_usd from max severity_score.
+        8. Add newly processed paths to state.processed_damage_paths.
 
         Args:
             state: Current ClaimState with image_paths from /upload endpoint.
@@ -139,6 +146,13 @@ class A2VisionAgent(BaseAgent):
                 )
                 return state
 
+            # ── Fresh analysis of this turn's NEW photos ──────────────────────
+            # IMPORTANT: clear stale no-damage / re-request flags before re-running.
+            # If the passenger previously sent a fine bag (no_damage_detected=True)
+            # and now sends a genuinely damaged one, the flag must not linger.
+            state.no_damage_detected = False
+            state.re_request_damage = False
+
             # ── Step 3: Analyse each NEW damage photo ─────────────────────────
             # Carry forward any results from prior turns
             all_damage_types: List[str] = list(state.damage_types)
@@ -161,7 +175,16 @@ class A2VisionAgent(BaseAgent):
                     },
                 )
 
-            # ── Step 4: Re-request if all new images too blurry ───────────────
+            # Mark these photos as processed regardless of outcome — we have now
+            # spent the Gemini call on them and must not analyse them again.
+            state.processed_damage_paths = list(already_processed) + damage_photos
+
+            # Deduplicate damage types — same type may appear across multiple photos
+            deduped_types = list(dict.fromkeys(all_damage_types))
+
+            # ── Step 4: Re-request if all new images too blurry to judge ──────
+            # Low confidence means "we couldn't see well enough" — NOT "no damage".
+            # The passenger is asked to retake; we do not decide damage either way.
             if max_confidence < _MIN_ACCEPTABLE_CONFIDENCE:
                 logger.warning(
                     "a2_low_confidence",
@@ -173,21 +196,50 @@ class A2VisionAgent(BaseAgent):
                 state.re_request_damage = True
                 return state
 
-            # ── Step 5: Brand classification (use first NEW damage photo) ──────
+            # ── Step 5: Clear photo, but no structural damage found ───────────
+            # The model looked clearly (confidence ok) and found nothing: empty
+            # damage types AND severity at/below the cosmetic threshold.
+            # Flag it so A1 tells the passenger their bag looks fine and asks them
+            # to confirm or send a clearer shot of real damage — WITHOUT advancing
+            # to the tag-photo step or auto-filing a $0 claim.
+            no_real_damage = (not deduped_types) and (max_severity <= _NO_DAMAGE_SEVERITY)
+            if no_real_damage:
+                logger.info(
+                    "a2_no_damage_detected",
+                    extra={
+                        "max_severity": max_severity,
+                        "max_confidence": max_confidence,
+                    },
+                )
+                state.damage_types = []
+                state.severity_score = round(max_severity, 4)
+                state.compensation_estimate_usd = 0.0
+                state.no_damage_detected = True
+                # Do NOT call classify_brand — brand is irrelevant when there is
+                # no damage, and skipping it saves one Gemini call per no-damage turn.
+                state.add_debug("a2_images_processed", len(damage_photos))
+                state.add_debug("a2_no_damage", True)
+                logger.info(
+                    "a2_completed",
+                    extra={
+                        "component": "A2",
+                        "severity": state.severity_score,
+                        "no_damage_detected": True,
+                        "compensation_usd": state.compensation_estimate_usd,
+                    },
+                )
+                return state
+
+            # ── Step 6: Real damage found — classify brand for compensation ───
             brand_result = await self._vision.classify_brand(damage_photos[0])
 
-            # ── Step 6: Write all A2 outputs into ClaimState ───────────────────
-            # Deduplicate damage types — same type may appear across multiple photos
-            state.damage_types = list(dict.fromkeys(all_damage_types))
+            # ── Step 7: Write all A2 outputs into ClaimState ───────────────────
+            state.damage_types = deduped_types
             state.severity_score = round(max_severity, 4)
             state.brand_detected = brand_result.brand
             state.is_luxury = brand_result.is_luxury
             state.compensation_estimate_usd = self._calculate_compensation(max_severity)
-
-            # ── Step 7: Mark these photos as processed ─────────────────────────
-            # Will be included in the response and echoed back by the frontend
-            # next turn to prevent re-analysis.
-            state.processed_damage_paths = list(already_processed) + damage_photos
+            state.no_damage_detected = False
 
             state.add_debug("a2_images_processed", len(damage_photos))
             state.add_debug("a2_brand_confidence", brand_result.confidence)
@@ -203,6 +255,7 @@ class A2VisionAgent(BaseAgent):
                 "severity": state.severity_score,
                 "is_luxury": state.is_luxury,
                 "compensation_usd": state.compensation_estimate_usd,
+                "no_damage_detected": state.no_damage_detected,
             },
         )
         return state
