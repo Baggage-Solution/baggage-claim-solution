@@ -39,3 +39,5 @@ isort==5.13.2
 
 # Form data / file uploads
 python-multipart==0.0.20
+
+reportlab>=4.0

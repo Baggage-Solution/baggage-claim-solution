@@ -45,7 +45,9 @@ def _make_damage_result(
     )
 
 
-def _make_brand_result(brand="Samsonite", is_luxury=False, confidence=0.9) -> BrandResult:
+def _make_brand_result(
+    brand="Samsonite", is_luxury=False, confidence=0.9
+) -> BrandResult:
     return BrandResult(brand=brand, is_luxury=is_luxury, confidence=confidence)
 
 
@@ -89,9 +91,7 @@ def _mock_providers(
     )
 
     mock_ocr = MagicMock()
-    mock_ocr.extract_bag_tag = AsyncMock(
-        return_value=tag_data or _make_tag_data()
-    )
+    mock_ocr.extract_bag_tag = AsyncMock(return_value=tag_data or _make_tag_data())
 
     mock_db = MagicMock()
     mock_db.save_claim = AsyncMock(return_value=None)
@@ -317,7 +317,7 @@ async def test_scenario_c_retry_blurry_tag_photo():
             "uploads/t016-c/damage_front.jpg",
             "uploads/t016-c/bag_tag_blurry.jpg",  # tag present but will fail OCR
         ],
-        pnr=None,            # A3 could not extract — blurry
+        pnr=None,  # A3 could not extract — blurry
         bag_id=None,
         flight_number=None,
         ocr_confidence=0.3,  # below threshold
@@ -332,9 +332,9 @@ async def test_scenario_c_retry_blurry_tag_photo():
     a4 = A4DecisionAgent(db=db)
     result = await a4.handle(state, [])
 
-    assert result.routing_lane is None, (
-        "A4 should not run when tag is blurry — re_request_tag=True must block A4"
-    )
+    assert (
+        result.routing_lane is None
+    ), "A4 should not run when tag is blurry — re_request_tag=True must block A4"
     db.save_claim.assert_not_called()
 
 
@@ -356,7 +356,7 @@ async def test_scenario_c_retry_blurry_damage_photos():
         ],
         re_request_damage=True,  # A2 set this flag — damage photos rejected
         re_request_tag=False,
-        severity_score=0.0,      # A2 could not score — blurry
+        severity_score=0.0,  # A2 could not score — blurry
         compensation_estimate_usd=0.0,
         is_luxury=False,
         fraud_score=0.0,
@@ -389,7 +389,7 @@ async def test_scenario_c_retry_flags_cleared_on_resubmit():
             "uploads/t016-c/damage_clear.jpg",
             "uploads/t016-c/bag_tag_clear.jpg",
         ],
-        re_request_tag=False,     # cleared — passenger retook photos
+        re_request_tag=False,  # cleared — passenger retook photos
         re_request_damage=False,
         severity_score=0.4,
         compensation_estimate_usd=60.0,
@@ -404,9 +404,10 @@ async def test_scenario_c_retry_flags_cleared_on_resubmit():
     a4 = A4DecisionAgent(db=db)
     result = await a4.handle(state, [])
 
-    assert result.routing_lane in (1, 2), (
-        "After clean retry, A4 should run and set routing_lane"
-    )
+    assert result.routing_lane in (
+        1,
+        2,
+    ), "After clean retry, A4 should run and set routing_lane"
     assert result.claim_id is not None
 
 
@@ -453,9 +454,7 @@ async def test_full_pipeline_lane1_smoke():
 
     # A3 — mocked OCR
     mock_ocr = MagicMock()
-    mock_ocr.extract_bag_tag = AsyncMock(
-        return_value=_make_tag_data(confidence=0.95)
-    )
+    mock_ocr.extract_bag_tag = AsyncMock(return_value=_make_tag_data(confidence=0.95))
     a3 = A3OCRAgent(ocr=mock_ocr)
     state = await a3.handle(state, [])
 

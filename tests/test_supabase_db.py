@@ -65,8 +65,10 @@ def test_init_raises_on_missing_url():
     with pytest.raises(ValueError, match="SUPABASE_URL"):
         # Patch create_client at the local import inside __init__ so supabase
         # package is not required to be installed in the test environment.
-        with patch("backend.db.supabase_client.SupabaseDBProvider.__init__",
-                   wraps=SupabaseDBProvider.__init__):
+        with patch(
+            "backend.db.supabase_client.SupabaseDBProvider.__init__",
+            wraps=SupabaseDBProvider.__init__,
+        ):
             # Call __init__ directly with None url — ValueError fires first
             provider = SupabaseDBProvider.__new__(SupabaseDBProvider)
             SupabaseDBProvider.__init__(provider, url=None, service_role_key=FAKE_KEY)

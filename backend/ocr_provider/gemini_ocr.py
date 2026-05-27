@@ -195,10 +195,12 @@ class GeminiOCRProvider(OCRProvider):
                 return self._model.generate_content([BAG_TAG_EXTRACTION_PROMPT, image])
             except Exception as exc:
                 err_str = str(exc).lower()
-                is_rate_limit = "429" in str(exc) or "quota" in err_str or "rate" in err_str
+                is_rate_limit = (
+                    "429" in str(exc) or "quota" in err_str or "rate" in err_str
+                )
 
                 if is_rate_limit and attempt < 2:
-                    wait_secs = 30 * (2 ** attempt)  # 30s → 60s
+                    wait_secs = 30 * (2**attempt)  # 30s → 60s
                     logger.warning(
                         "gemini_ocr_rate_limited",
                         extra={

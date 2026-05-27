@@ -73,6 +73,7 @@ class ClaimState:
 
     def is_lane1_eligible(self) -> bool:
         from backend.config import get_settings
+
         s = get_settings()
         return (
             self.compensation_estimate_usd <= s.lane1_max_compensation_usd
