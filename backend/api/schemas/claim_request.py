@@ -12,22 +12,24 @@ class WebhookRequest(BaseModel):
     conversation_history: Optional[List[Dict[str, Any]]] = None
 
     # ── Echoed state fields ────────────────────────────────────────────────────
-    # LangGraph MemorySaver does NOT persist plain dataclass fields between
-    # separate ainvoke() calls. The frontend echoes these values from the last
-    # response back on every request so the backend always has the full picture.
-    # Pattern: backend sets → response carries → frontend stores → frontend echoes.
-
     conversation_step: Optional[str] = "greeting"
     conversation_ended: Optional[bool] = False
-    # True when A2 found a clear photo with no damage. Echoed so the flag can
-    # be re-evaluated each turn (a new, genuinely damaged photo clears it).
     no_damage_detected: Optional[bool] = False
 
-    # Optional QR context (T-018) — accepted but not required.
+    # Issue #1 — object gate (non-bag detection)
+    not_a_bag: Optional[bool] = False
+    last_object_description: Optional[str] = None
+    non_bag_attempts: Optional[int] = 0
+
+    # Issue #2/#4 — tag spotted inside a damage photo
+    tag_in_damage_photo: Optional[bool] = False
+    tag_candidate_paths: Optional[List[str]] = None
+
+    # Optional QR context (T-018)
     airport_context: Optional[str] = None
     terminal_context: Optional[str] = None
 
-    # A2 results — echoed so confirm turn has correct damage data for A4
+    # A2 results
     processed_damage_paths: Optional[List[str]] = None
     damage_types: Optional[List[str]] = None
     severity_score: Optional[float] = None
@@ -35,10 +37,18 @@ class WebhookRequest(BaseModel):
     is_luxury: Optional[bool] = None
     compensation_estimate_usd: Optional[float] = None
 
-    # A3 results — echoed so confirm turn has correct OCR data for A4
-    # processed_tag_paths prevents A3 re-running OCR on an already-scanned tag.
+    # A3 results
     processed_tag_paths: Optional[List[str]] = None
     flight_number: Optional[str] = None
     pnr: Optional[str] = None
     bag_id: Optional[str] = None
     ocr_confidence: Optional[float] = None
+    tag_data_complete: Optional[bool] = False
+    tag_manually_entered: Optional[bool] = False
+
+    # Issue #3 — manual tag entry (passenger-supplied)
+    manual_tag_text: Optional[str] = None
+    manual_flight_number: Optional[str] = None
+    manual_pnr: Optional[str] = None
+    manual_bag_id: Optional[str] = None
+    offer_manual_entry: Optional[bool] = False

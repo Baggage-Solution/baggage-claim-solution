@@ -3,19 +3,18 @@ import ChatHeader from './components/ChatHeader.jsx'
 import ChatInput from './components/ChatInput.jsx'
 import ChatWindow from './components/ChatWindow.jsx'
 import ImageUploadPreview from './components/ImageUploadPreview.jsx'
+import ManualTagEntry from './components/ManualTagEntry.jsx'
 import { useClaimFlow } from './hooks/useClaimFlow.js'
 
 /**
- * App — root component. Full T-013 implementation.
- *
- * T-003 stubs removed. All logic delegated to useClaimFlow hook:
- *   - Multi-turn conversation with FastAPI /webhook
- *   - Multi-photo upload via /upload endpoint
- *   - Staged photo preview before send
- *   - Claim result (Lane 1 voucher | Lane 2 under-review) surfaced via hook
+ * App — root component.
  *
  * Conversation state machine steps:
  *   greeting → damage_photos → tag_photo → confirm → result
+ *
+ * Manual tag entry (issue #3): when the backend sets offer_manual_entry, the
+ * hook flips showManualEntry true and a structured form appears above the
+ * input. The passenger can also just type the details directly in chat.
  */
 export default function App() {
   const [inputValue, setInputValue] = useState('')
@@ -27,19 +26,17 @@ export default function App() {
     claimResult,
     pendingImages,
     inputDisabled,
+    showManualEntry,
+    setShowManualEntry,
     handleSendText,
     handleSendImages,
+    submitManualTag,
     handleFileSelect,
     removePendingImage,
   } = useClaimFlow()
 
-  /**
-   * onSend — determine whether to send text-only or images.
-   * If photos are staged, always send them (text becomes the caption).
-   */
   const onSend = async () => {
     if (inputDisabled || isLoading) return
-
     if (pendingImages.length > 0) {
       await handleSendImages(inputValue.trim())
       setInputValue('')
@@ -49,7 +46,6 @@ export default function App() {
     }
   }
 
-  /** Allow Enter key to trigger send */
   const onKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -59,10 +55,8 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-700">
-      {/* Phone-width simulator frame */}
       <div className="flex h-[700px] w-[400px] flex-col overflow-hidden rounded-2xl shadow-2xl">
 
-        {/* Step badge — small dev indicator showing current conversation step */}
         <div className="absolute right-4 top-4 z-10 hidden rounded-full bg-black/40 px-2 py-0.5 text-[10px] text-white md:block">
           step: {step}
         </div>
@@ -75,7 +69,15 @@ export default function App() {
           claimResult={claimResult}
         />
 
-        {/* Staged photo strip — visible when photos selected but not yet sent */}
+        {/* Manual tag-entry form — shown when backend offers it (issue #3) */}
+        {showManualEntry && !inputDisabled && (
+          <ManualTagEntry
+            onSubmit={submitManualTag}
+            onCancel={() => setShowManualEntry(false)}
+            disabled={isLoading}
+          />
+        )}
+
         <ImageUploadPreview
           files={pendingImages}
           onRemove={removePendingImage}

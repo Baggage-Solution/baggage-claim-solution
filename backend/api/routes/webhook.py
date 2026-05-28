@@ -77,6 +77,13 @@ async def webhook(
             # A2 echoed results
             conversation_ended=payload.conversation_ended or False,
             no_damage_detected=payload.no_damage_detected or False,
+            # Issue #1 — object gate
+            not_a_bag=payload.not_a_bag or False,
+            last_object_description=payload.last_object_description,
+            non_bag_attempts=payload.non_bag_attempts or 0,
+            # Issue #2/#4 — tag in damage photo
+            tag_in_damage_photo=payload.tag_in_damage_photo or False,
+            tag_candidate_paths=payload.tag_candidate_paths or [],
             processed_damage_paths=payload.processed_damage_paths or [],
             damage_types=payload.damage_types or [],
             severity_score=payload.severity_score or 0.0,
@@ -89,6 +96,14 @@ async def webhook(
             pnr=payload.pnr,
             bag_id=payload.bag_id,
             ocr_confidence=payload.ocr_confidence or 0.0,
+            tag_data_complete=payload.tag_data_complete or False,
+            tag_manually_entered=payload.tag_manually_entered or False,
+            # Issue #3 — manual tag entry
+            manual_tag_text=payload.manual_tag_text,
+            manual_flight_number=payload.manual_flight_number,
+            manual_pnr=payload.manual_pnr,
+            manual_bag_id=payload.manual_bag_id,
+            offer_manual_entry=payload.offer_manual_entry or False,
             request_id=req_id,
         )
 
@@ -103,6 +118,13 @@ async def webhook(
             re_request_damage=state.re_request_damage,
             conversation_ended=state.conversation_ended,
             no_damage_detected=state.no_damage_detected,
+            # Issue #1 — object gate
+            not_a_bag=state.not_a_bag,
+            last_object_description=state.last_object_description,
+            non_bag_attempts=state.non_bag_attempts,
+            # Issue #2/#4 — tag in damage photo
+            tag_in_damage_photo=state.tag_in_damage_photo,
+            tag_candidate_paths=state.tag_candidate_paths,
             # Echo A2 results back
             processed_damage_paths=state.processed_damage_paths,
             damage_types=state.damage_types,
@@ -116,6 +138,10 @@ async def webhook(
             pnr=state.pnr,
             bag_id=state.bag_id,
             ocr_confidence=state.ocr_confidence,
+            tag_data_complete=state.tag_data_complete,
+            tag_manually_entered=state.tag_manually_entered,
+            # Issue #3 — manual tag entry
+            offer_manual_entry=state.offer_manual_entry,
             error=state.error,
         )
 

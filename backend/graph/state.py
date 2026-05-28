@@ -28,10 +28,6 @@ class ClaimState:
     a1_response: Optional[str] = None
     re_request_tag: bool = False
     re_request_damage: bool = False
-    # Set True when the conversation has reached a terminal state with no claim:
-    # - passenger confirmed no damage ("no damage sorry")
-    # - A4 detected no damage in photos
-    # Frontend uses this to lock the input so no further messages can be sent.
     conversation_ended: bool = False
 
     # ── A2 — VISION ────────────────────────────────────────────────────────────
@@ -41,30 +37,48 @@ class ClaimState:
     brand_detected: Optional[str] = None
     is_luxury: bool = False
     compensation_estimate_usd: float = 0.0
-    # Set True by A2 when damage photos were successfully analysed (good
-    # confidence) but NO structural damage was found. This is distinct from
-    # re_request_damage (which means "image too blurry, retake it").
-    #
-    # no_damage_detected = "we looked clearly and the bag is fine"
-    # re_request_damage  = "we couldn't see clearly, send a better photo"
-    #
-    # A1 uses this flag to tell the passenger no damage was found and to NOT
-    # advance the conversation to the tag-photo step. The flag is NON-terminal:
-    # the passenger can still upload a different/clearer photo of real damage,
-    # which clears the flag on the next A2 run. Only an explicit passenger
-    # confirmation of "no damage" sets conversation_ended (terminal).
+    # A2 looked clearly and the bag is undamaged (distinct from re_request_damage,
+    # which means "too blurry, retake").
     no_damage_detected: bool = False
+
+    # ── ISSUE #1 — NON-BAG / OBJECT GATE ─────────────────────────────────────────
+    # Set True by A2 when the most recent NEW image(s) were not luggage at all
+    # (e.g. a watch, a person). A1 then politely asks for a real bag photo
+    # instead of pretending it analysed a bag.
+    not_a_bag: bool = False
+    last_object_description: Optional[str] = None
+    # How many times in a row the passenger has uploaded a non-bag image.
+    # After NON_BAG_ATTEMPT_LIMIT, A1 gently ends the conversation.
+    non_bag_attempts: int = 0
+
+    # ── ISSUE #2 / #4 — TAG FOUND INSIDE A DAMAGE PHOTO ───────────────────────────
+    # Set True by A2 when a damage photo ALSO contained a legible bag tag, so A3
+    # should run OCR on that same image (no separate tag upload needed).
+    tag_in_damage_photo: bool = False
+    # Damage-photo paths whose embedded tag is worth OCR-ing. A3 consumes these.
+    tag_candidate_paths: List[str] = field(default_factory=list)
 
     # ── A3 — OCR ───────────────────────────────────────────────────────────────
     flight_number: Optional[str] = None
     pnr: Optional[str] = None
     bag_id: Optional[str] = None
     ocr_confidence: float = 0.0
-    # Tag photos A3 has already run OCR on. Echoed back by the frontend each
-    # turn (mirrors processed_damage_paths for A2). Prevents A3 from making a
-    # redundant Gemini OCR call on the confirm turn, where the frontend resends
-    # the already-scanned tag image along with the damage images.
     processed_tag_paths: List[str] = field(default_factory=list)
+    # True once we have usable tag data from ANY source (OCR or manual entry).
+    tag_data_complete: bool = False
+    # True when tag data came from the passenger typing/entering it manually
+    # rather than from OCR (issue #3). Affects fraud weighting in A4.
+    tag_manually_entered: bool = False
+
+    # ── ISSUE #3 — MANUAL TAG ENTRY ──────────────────────────────────────────────
+    # Free-text or structured tag details supplied by the passenger when they
+    # have no tag or OCR failed. Parsed by A3 into flight_number / pnr / bag_id.
+    manual_tag_text: Optional[str] = None
+    manual_flight_number: Optional[str] = None
+    manual_pnr: Optional[str] = None
+    manual_bag_id: Optional[str] = None
+    # Set True by A1/A3 to signal the UI to offer the manual-entry form.
+    offer_manual_entry: bool = False
 
     # ── A4 — DECISION ──────────────────────────────────────────────────────────
     routing_lane: Optional[int] = None
