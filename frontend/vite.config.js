@@ -13,6 +13,15 @@ export default defineConfig({
       '/decision': 'http://localhost:8000',   // agent approve / reject
       '/uploads':  'http://localhost:8000',   // serve stored claim photos
       '/qr':       'http://localhost:8000',   // T-018 — QR code generation
+      '/events': {                            // SSE real-time notifications (A5)
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        // SSE requires these headers to be stripped so the browser receives
+        // the raw chunked stream rather than a buffered response.
+        headers: {
+          'Accept': 'text/event-stream',
+        },
+      },
     },
   },
 })

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import re
@@ -131,9 +132,16 @@ class GeminiVisionProvider(VisionProvider):
     analyze_damage() / classify_brand() are retained as thin wrappers for
     backwards compatibility with existing unit tests.
 
-    BUG FIX: _call_with_retry() now uses generate_content_async() instead of
-    the synchronous generate_content(), so the FastAPI event loop is never
-    blocked while waiting for Gemini responses.
+    BUG FIX (_load_image): Image.open(path) was called without a context manager,
+    leaving the OS file handle open until Python GC collected the PIL object.
+    On Windows this caused WinError 32 ("file is being used by another process")
+    when _move_pending_uploads() tried to move the same file immediately after
+    the vision call. Fix: read raw bytes with a context manager so the handle is
+    closed before we return, then open from an in-memory BytesIO buffer.
+
+    BUG FIX (_call_with_retry): uses generate_content_async() instead of the
+    synchronous generate_content(), so the FastAPI event loop is never blocked
+    while waiting for Gemini responses.
     """
 
     def __init__(self, api_key: str, model: str = "gemini-2.5-flash") -> None:
@@ -144,10 +152,38 @@ class GeminiVisionProvider(VisionProvider):
         self._model_name = model
 
     def _load_image(self, image_path: str) -> Image.Image:
+        """
+        Load an image from disk for Gemini multimodal input.
+
+        Reads the raw bytes into memory with a context manager (so the OS file
+        handle is closed immediately), then opens the image from an in-memory
+        BytesIO buffer and calls .load() to force full pixel decode.
+
+        This pattern eliminates WinError 32 ("The process cannot access the
+        file because it is being used by another process") which occurred when
+        _move_pending_uploads() called shutil.move() on the same file while PIL
+        still held an open handle from a bare Image.open(path) call.
+
+        Args:
+            image_path: Absolute or relative path to the image file.
+
+        Returns:
+            PIL Image object (fully decoded, no open OS file handle).
+
+        Raises:
+            FileNotFoundError: If the image path does not exist.
+        """
         path = Path(image_path)
         if not path.exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
-        return Image.open(path)
+        # Read all bytes then close the file handle before returning.
+        # Image.open() on a plain Path keeps the handle open until GC —
+        # that causes WinError 32 when shutil.move runs on Windows.
+        with open(path, "rb") as fh:
+            data = fh.read()
+        img = Image.open(io.BytesIO(data))
+        img.load()  # force full decode; BytesIO stays alive with the Image object
+        return img
 
     def _parse_json_response(self, raw_text: str, context: str) -> dict:
         cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", raw_text).strip()

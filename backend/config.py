@@ -7,6 +7,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Application settings loaded from environment variables and .env file.
+
+    All provider switches, API keys, thresholds, and feature flags are
+    defined here. Change a provider by setting the corresponding *_PROVIDER
+    env var — no code changes needed in any agent or business-logic file.
+    """
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # =========================================================
@@ -71,4 +78,12 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    """Return the cached application settings singleton.
+
+    Uses lru_cache so the .env file is read only once per process.
+    Call get_settings.cache_clear() in tests to reset between cases.
+
+    Returns:
+        Settings: The application settings instance.
+    """
     return Settings()

@@ -6,6 +6,14 @@ from pydantic import BaseModel
 
 
 class WebhookRequest(BaseModel):
+    """Inbound payload from the React simulator on every passenger turn.
+
+    The frontend echoes back all agent-computed fields from the previous
+    response (A2 results, A3 results, conversation_step, etc.) so that
+    each webhook call is stateless on the backend — the full ClaimState
+    is reconstructed from these fields on every request.
+    """
+
     session_id: str
     message: str
     image_paths: Optional[List[str]] = None

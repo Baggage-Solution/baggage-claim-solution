@@ -19,6 +19,18 @@ class LocalStorageProvider(StorageProvider):
         self._base = base_path
 
     async def save(self, file_bytes: bytes, filename: str, claim_id: str) -> str:
+        """Save raw file bytes to disk under data/uploads/{claim_id}/{filename}.
+
+        Creates the claim directory if it does not exist.
+
+        Args:
+            file_bytes: Raw bytes of the uploaded image.
+            filename: Target filename (e.g. damage_001.jpg).
+            claim_id: Claim or session identifier used as the subdirectory name.
+
+        Returns:
+            str: Absolute file path where the bytes were written.
+        """
         claim_dir = os.path.join(self._base, claim_id)
         os.makedirs(claim_dir, exist_ok=True)
         path = os.path.join(claim_dir, filename)
@@ -30,4 +42,13 @@ class LocalStorageProvider(StorageProvider):
         return path
 
     async def get_path(self, filename: str, claim_id: str) -> str:
+        """Return the expected file path for a stored upload without reading it.
+
+        Args:
+            filename: The filename as originally saved.
+            claim_id: The claim identifier subdirectory.
+
+        Returns:
+            str: Full path to the file on disk.
+        """
         return os.path.join(self._base, claim_id, filename)

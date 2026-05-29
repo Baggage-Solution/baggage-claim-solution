@@ -27,7 +27,15 @@ def _move_pending_uploads(claim_id: str) -> None:
     Once the claim is finalized, files must live under the claim_id folder
     so GET /claims/{claim_id}/images can find and serve them to the dashboard.
 
-    Phase 2 swap: replace local shutil.move with R2/S3 copy + delete calls.
+    BUG FIX: replaced shutil.move() with shutil.copy2() + os.remove().
+    shutil.move() on Windows raises WinError 32 ("file is being used by
+    another process") if any handle to the file is still open — even after
+    the PIL Image object is GC'd, Windows can hold the handle open briefly.
+    copy2+remove is safer: the copy succeeds regardless of open handles,
+    and the remove is attempted separately with its own error guard so a
+    stale handle on the source does not abort the whole move batch.
+
+    Phase 2 swap: replace local shutil calls with R2/S3 copy + delete calls.
     The claim_id is available at this point so the destination key is known.
 
     Args:
@@ -56,17 +64,49 @@ def _move_pending_uploads(claim_id: str) -> None:
     os.makedirs(claim_dir, exist_ok=True)
 
     moved = []
+    failed = []
     for filename in files:
         src = os.path.join(pending_dir, filename)
         dst = os.path.join(claim_dir, filename)
-        shutil.move(src, dst)
-        moved.append(filename)
+        try:
+            # copy2 preserves metadata and works even when another process
+            # still has the source file open (safe on Windows).
+            shutil.copy2(src, dst)
+            # Remove the source separately so a stale handle only prevents
+            # cleanup of this one file, not the whole batch.
+            try:
+                os.remove(src)
+            except OSError as rm_err:
+                # The copy already succeeded — the file is safely in claim_dir.
+                # Log the leftover but do NOT fail; it will be cleaned up on
+                # the next run or by a periodic maintenance job.
+                logger.warning(
+                    "pending_upload_source_remove_failed",
+                    extra={
+                        "claim_id": claim_id,
+                        "filename": filename,
+                        "error": str(rm_err),
+                    },
+                )
+            moved.append(filename)
+        except OSError as copy_err:
+            logger.error(
+                "pending_upload_copy_failed",
+                extra={
+                    "claim_id": claim_id,
+                    "src": src,
+                    "dst": dst,
+                    "error": str(copy_err),
+                },
+            )
+            failed.append(filename)
 
     logger.info(
         "uploads_moved_to_claim",
         extra={
             "claim_id": claim_id,
-            "count": len(moved),
+            "moved": len(moved),
+            "failed": len(failed),
             "files": moved,
             "src": pending_dir,
             "dst": claim_dir,
@@ -86,6 +126,7 @@ def _build_graph() -> StateGraph:
     """
 
     async def router_node(state: ClaimState) -> ClaimState:
+        """Entry node — pass-through that triggers the conditional router."""
         return state
 
     def _route_from_router(state: ClaimState) -> str:
@@ -106,36 +147,42 @@ def _build_graph() -> StateGraph:
         return "a1_text"
 
     async def a1_text_node(state: ClaimState) -> ClaimState:
+        """Text-only branch node — runs A1 with no image context."""
         from backend.agents.a1_conversation import A1ConversationAgent
         from backend.dependencies import provide_llm
 
         return await A1ConversationAgent(llm=provide_llm()).handle(state, [])
 
     async def a2_node(state: ClaimState) -> ClaimState:
+        """Image branch — runs A2 vision analysis on uploaded damage photos."""
         from backend.agents.a2_vision import A2VisionAgent
         from backend.dependencies import provide_vision
 
         return await A2VisionAgent(vision=provide_vision()).handle(state, [])
 
     async def a3_node(state: ClaimState) -> ClaimState:
+        """Image branch — runs A3 OCR on bag tag photos and tag candidates."""
         from backend.agents.a3_ocr import A3OCRAgent
         from backend.dependencies import provide_ocr
 
         return await A3OCRAgent(ocr=provide_ocr()).handle(state, [])
 
     async def a1_image_node(state: ClaimState) -> ClaimState:
+        """Image branch — runs A1 AFTER A2/A3 to reply using analysed data."""
         from backend.agents.a1_conversation import A1ConversationAgent
         from backend.dependencies import provide_llm
 
         return await A1ConversationAgent(llm=provide_llm()).handle(state, [])
 
     async def a4_node(state: ClaimState) -> ClaimState:
+        """Image branch — runs A4 decision engine after confirm step."""
         from backend.agents.a4_decision import A4DecisionAgent
         from backend.dependencies import provide_db
 
         return await A4DecisionAgent(db=provide_db()).handle(state, [])
 
     async def a5_node(state: ClaimState) -> ClaimState:
+        """Image branch — runs A5 notification after A4 routing decision."""
         from backend.agents.a5_notification import A5NotificationAgent
         from backend.dependencies import provide_db
 
@@ -234,6 +281,15 @@ _chat_graph = None
 
 
 def get_graph():
+    """Return the compiled LangGraph StateGraph (singleton).
+
+    Builds the graph on first call and caches it globally. The graph
+    encodes the full 5-agent pipeline: router → A2/A3/A1_image/A4/A5 or
+    router → A1_text, depending on whether the turn has image uploads.
+
+    Returns:
+        CompiledStateGraph: The compiled LangGraph graph ready to invoke.
+    """
     global _chat_graph
     if _chat_graph is None:
         _chat_graph = _build_graph()
@@ -241,6 +297,15 @@ def get_graph():
 
 
 class ClaimOrchestrator:
+    """Thin facade over the compiled LangGraph graph.
+
+    Translates flat webhook parameters into a ClaimState, invokes the graph
+    for one passenger turn, and returns the updated state for the caller to
+    persist and return to the simulator.
+
+    Agents are never imported here directly — they are resolved at runtime
+    by the graph node functions which call provide_llm / provide_vision etc.
+    """
 
     async def run(
         self,
