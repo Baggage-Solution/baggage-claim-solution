@@ -113,16 +113,30 @@ class SupabaseDBProvider(DBProvider):
         properly initialised inside the running event loop.  Subsequent calls
         return the cached instance (no reconnect overhead).
 
+        BUG FIX: on any exception during client creation, self._client is reset
+        to None so the next call retries the handshake rather than reusing a
+        half-initialised or dead httpx session. Without this reset, a transient
+        DNS failure (getaddrinfo failed) would leave self._client pointing at a
+        broken object, making every subsequent call fail even after the network
+        recovers — causing the intermittent dashboard error.
+
         Returns:
             supabase.AsyncClient: Ready-to-use async Supabase client.
+
+        Raises:
+            Exception: Re-raises the original error after resetting self._client.
         """
         if self._client is None:
             from supabase import acreate_client
-
-            self._client = await acreate_client(self._url, self._service_role_key)
-            logger.info(
-                "supabase_async_client_initialised", extra={"url": self._url[:40]}
-            )
+            try:
+                self._client = await acreate_client(self._url, self._service_role_key)
+                logger.info(
+                    "supabase_async_client_initialised", extra={"url": self._url[:40]}
+                )
+            except Exception:
+                # Reset so the next request retries instead of reusing a broken client.
+                self._client = None
+                raise
         return self._client
 
     # ── write operations ──────────────────────────────────────────────────────

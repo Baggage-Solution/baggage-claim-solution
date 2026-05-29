@@ -63,6 +63,10 @@ async def agent_decision(payload: DecisionRequest) -> DecisionResponse:
     so the dashboard and the polling simulator both show the final amounts.
 
     No auth for POC — add JWT middleware in Phase 2.
+
+    BUG FIX: all DB calls are now wrapped in try/except. A network error
+    (e.g. [Errno 11001] getaddrinfo failed) previously caused an unhandled
+    500 from FastAPI. Now returns a structured error DecisionResponse instead.
     """
     if payload.action not in ("approve", "reject"):
         return DecisionResponse(
@@ -83,7 +87,22 @@ async def agent_decision(payload: DecisionRequest) -> DecisionResponse:
 
     # Look up the existing claim so we can fall back to its current compensation
     # when the agent did not edit the amount.
-    existing = await db.get_claim(payload.claim_id)
+    try:
+        existing = await db.get_claim(payload.claim_id)
+    except Exception as exc:
+        logger.warning(
+            "agent_decision_db_get_failed",
+            extra={"claim_id": payload.claim_id, "error": str(exc)},
+        )
+        return DecisionResponse(
+            claim_id=payload.claim_id,
+            status="error",
+            message=(
+                f"Could not reach the database to look up claim {payload.claim_id}. "
+                "Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env."
+            ),
+        )
+
     if existing is None:
         return DecisionResponse(
             claim_id=payload.claim_id,
@@ -93,7 +112,6 @@ async def agent_decision(payload: DecisionRequest) -> DecisionResponse:
 
     if payload.action == "approve":
         new_status = "RESOLVED"
-        # Use the edited amount if provided, else keep what was already stored.
         final_comp = (
             float(payload.modified_compensation)
             if payload.modified_compensation is not None
@@ -111,7 +129,21 @@ async def agent_decision(payload: DecisionRequest) -> DecisionResponse:
         voucher = None
         fields = {"status": new_status}
 
-    updated = await db.update_claim(payload.claim_id, fields)
+    try:
+        updated = await db.update_claim(payload.claim_id, fields)
+    except Exception as exc:
+        logger.warning(
+            "agent_decision_db_update_failed",
+            extra={"claim_id": payload.claim_id, "action": payload.action, "error": str(exc)},
+        )
+        return DecisionResponse(
+            claim_id=payload.claim_id,
+            status="error",
+            message=(
+                f"Decision recorded locally but could not be saved to the database. "
+                f"Error: {exc}"
+            ),
+        )
 
     # Prefer the persisted values returned by the DB; fall back to what we set.
     if updated:
@@ -152,6 +184,11 @@ async def get_pending_claims():
 
     Returns an empty list if DB is not configured (missing Supabase credentials)
     so the dashboard renders cleanly instead of showing a backend error.
+
+    BUG FIX: DB call is now wrapped in try/except. Previously a network error
+    (e.g. [Errno 11001] getaddrinfo failed) caused FastAPI to return a 500,
+    which the Dashboard caught as "Failed to load claims — is the backend
+    running?". Now returns an empty list with a warning message instead.
     """
     db = provide_db()
     if db is None:
@@ -161,8 +198,24 @@ async def get_pending_claims():
             "warning": "Database not configured — set SUPABASE_URL and "
                        "SUPABASE_SERVICE_ROLE_KEY in .env to enable claim persistence.",
         }
-    claims = await db.get_claims_by_status("AWAITING_REVIEW")
-    return {"claims": claims, "count": len(claims)}
+
+    try:
+        claims = await db.get_claims_by_status("AWAITING_REVIEW")
+        return {"claims": claims, "count": len(claims)}
+    except Exception as exc:
+        logger.warning(
+            "get_pending_claims_db_failed",
+            extra={"error": str(exc)},
+        )
+        return {
+            "claims": [],
+            "count": 0,
+            "warning": (
+                "Could not reach the database. "
+                "Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env. "
+                f"Error: {exc}"
+            ),
+        }
 
 
 @router.get("/claims/{claim_id}/status")
@@ -171,21 +224,21 @@ async def get_claim_status(claim_id: str):
     Lightweight status endpoint the simulator polls to learn the outcome of a
     Lane 2 claim after staff act in the dashboard.
 
-    Returns the current status plus the (possibly edited) compensation and
-    voucher code, so the simulator can render an approved (green) or rejected
-    (red) card without holding any server-side session state.
-
-    Args:
-        claim_id: The CLM-YYYYMMDD-XXXX claim identifier.
-
-    Returns:
-        JSON with found flag, status, compensation, voucher_code.
-        found=False if the claim_id is unknown.
+    BUG FIX: DB call is now wrapped in try/except so a network error returns
+    a structured response instead of a 500.
     """
     db = provide_db()
     if db is None:
         return {"found": False, "claim_id": claim_id}
-    claim = await db.get_claim(claim_id)
+
+    try:
+        claim = await db.get_claim(claim_id)
+    except Exception as exc:
+        logger.warning(
+            "get_claim_status_db_failed",
+            extra={"claim_id": claim_id, "error": str(exc)},
+        )
+        return {"found": False, "claim_id": claim_id, "error": str(exc)}
 
     if claim is None:
         return {"found": False, "claim_id": claim_id}
@@ -208,12 +261,6 @@ async def get_claim_images(claim_id: str):
     Scans data/uploads/{claim_id}/ on local disk. Images are served via the
     /uploads StaticFiles mount in main.py. Dashboard ClaimCard fetches this on
     mount to display photos for review.
-
-    Args:
-        claim_id: The CLM-YYYYMMDD-XXXX claim identifier.
-
-    Returns:
-        JSON with 'images' list and 'count'. Each image has url, filename, is_tag.
     """
     upload_dir = os.path.join("data", "uploads", claim_id)
 

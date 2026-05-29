@@ -27,7 +27,15 @@ def _move_pending_uploads(claim_id: str) -> None:
     Once the claim is finalized, files must live under the claim_id folder
     so GET /claims/{claim_id}/images can find and serve them to the dashboard.
 
-    Phase 2 swap: replace local shutil.move with R2/S3 copy + delete calls.
+    BUG FIX: replaced shutil.move() with shutil.copy2() + os.remove().
+    shutil.move() on Windows raises WinError 32 ("file is being used by
+    another process") if any handle to the file is still open — even after
+    the PIL Image object is GC'd, Windows can hold the handle open briefly.
+    copy2+remove is safer: the copy succeeds regardless of open handles,
+    and the remove is attempted separately with its own error guard so a
+    stale handle on the source does not abort the whole move batch.
+
+    Phase 2 swap: replace local shutil calls with R2/S3 copy + delete calls.
     The claim_id is available at this point so the destination key is known.
 
     Args:
@@ -56,17 +64,49 @@ def _move_pending_uploads(claim_id: str) -> None:
     os.makedirs(claim_dir, exist_ok=True)
 
     moved = []
+    failed = []
     for filename in files:
         src = os.path.join(pending_dir, filename)
         dst = os.path.join(claim_dir, filename)
-        shutil.move(src, dst)
-        moved.append(filename)
+        try:
+            # copy2 preserves metadata and works even when another process
+            # still has the source file open (safe on Windows).
+            shutil.copy2(src, dst)
+            # Remove the source separately so a stale handle only prevents
+            # cleanup of this one file, not the whole batch.
+            try:
+                os.remove(src)
+            except OSError as rm_err:
+                # The copy already succeeded — the file is safely in claim_dir.
+                # Log the leftover but do NOT fail; it will be cleaned up on
+                # the next run or by a periodic maintenance job.
+                logger.warning(
+                    "pending_upload_source_remove_failed",
+                    extra={
+                        "claim_id": claim_id,
+                        "filename": filename,
+                        "error": str(rm_err),
+                    },
+                )
+            moved.append(filename)
+        except OSError as copy_err:
+            logger.error(
+                "pending_upload_copy_failed",
+                extra={
+                    "claim_id": claim_id,
+                    "src": src,
+                    "dst": dst,
+                    "error": str(copy_err),
+                },
+            )
+            failed.append(filename)
 
     logger.info(
         "uploads_moved_to_claim",
         extra={
             "claim_id": claim_id,
-            "count": len(moved),
+            "moved": len(moved),
+            "failed": len(failed),
             "files": moved,
             "src": pending_dir,
             "dst": claim_dir,
