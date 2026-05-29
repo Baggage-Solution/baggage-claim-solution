@@ -8,8 +8,7 @@ import logging
 import os
 from typing import List, Optional
 
-from fastapi import (APIRouter, File, Form, Header, HTTPException, Request,
-                     UploadFile)
+from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 from backend.api.schemas.claim_request import WebhookRequest
@@ -24,6 +23,18 @@ orchestrator = ClaimOrchestrator()
 
 
 def verify_whatsapp_signature(payload: bytes, signature_header: Optional[str]) -> bool:
+    """Verify the X-Hub-Signature-256 HMAC signature from WhatsApp Cloud API.
+
+    Returns True (skip check) when WHATSAPP_APP_SECRET is not configured
+    so the POC simulator works without a real WhatsApp credentials.
+
+    Args:
+        payload: Raw request body bytes used as the HMAC message.
+        signature_header: Value of the X-Hub-Signature-256 header.
+
+    Returns:
+        bool: True if the signature is valid or the secret is not configured.
+    """
     app_secret = os.getenv("WHATSAPP_APP_SECRET")
     if not app_secret:
         logger.debug(
@@ -51,6 +62,23 @@ async def webhook(
     payload: WebhookRequest,
     x_hub_signature_256: Optional[str] = Header(default=None),
 ) -> WebhookResponse:
+    """Process one passenger turn through the full 5-agent LangGraph pipeline.
+
+    Validates the WhatsApp HMAC signature, reconstructs ClaimState from the
+    echoed request fields, invokes the agent graph, and returns the updated
+    state as a WebhookResponse for the simulator to render and echo back.
+
+    Args:
+        request: Raw FastAPI request (used for body bytes + request_id).
+        payload: Parsed WebhookRequest with message, images, and echoed state.
+        x_hub_signature_256: HMAC header from WhatsApp Cloud API (optional in POC).
+
+    Returns:
+        WebhookResponse with the AI reply and all updated state fields.
+
+    Raises:
+        HTTPException 403: If the HMAC signature is present but invalid.
+    """
     body_bytes = await request.body()
     if not verify_whatsapp_signature(body_bytes, x_hub_signature_256):
         raise HTTPException(status_code=403, detail="Invalid X-Hub-Signature-256")
@@ -194,11 +222,24 @@ async def upload_image(
 
 @router.get("/events/{session_id}")
 async def sse_events(session_id: str):
+    """Server-Sent Events endpoint for real-time notifications to the simulator.
+
+    The simulator polls this endpoint after submitting a turn. A5 pushes
+    Lane 1 approval and voucher events through the per-session queue;
+    this endpoint streams them as SSE events.
+
+    Args:
+        session_id: Matches the session_id sent in the webhook request.
+
+    Returns:
+        StreamingResponse: Continuous SSE stream for this session.
+    """
     from backend.agents.a5_notification import get_or_create_queue
 
     queue = get_or_create_queue(session_id)
 
     async def event_generator():
+        """Generate SSE events from the session queue with 30s heartbeat timeout."""
         yield f"data: {json.dumps({'type': 'connected', 'session_id': session_id})}\n\n"
         while True:
             try:

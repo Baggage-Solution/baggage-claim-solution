@@ -64,29 +64,66 @@ class SupabaseDBProvider(DBProvider):
 
     The service role key bypasses Row Level Security — correct for backend use.
     Never expose it on the frontend.
+
+    IMPORTANT — async client
+    ------------------------
+    supabase-py 2.x ships both a sync Client (create_client) and an async
+    AsyncClient (acreate_client / create_async_client).  FastAPI runs on an
+    asyncio event loop; calling the *synchronous* Supabase client from inside
+    an async def blocks the event loop and on Windows causes:
+
+        [Errno 11001] getaddrinfo failed
+
+    because Windows' asyncio event loop (ProactorEventLoop) does not allow
+    blocking socket calls on the loop thread.  The fix is to use
+    acreate_client() and await every .execute() call.  That is what this
+    class does — _client is an AsyncClient, not the sync Client.
     """
 
     def __init__(self, url: str, service_role_key: str) -> None:
         """
-        Initialise the Supabase client.
+        Store credentials for deferred async initialisation.
+
+        The AsyncClient must be created with ``await acreate_client()``, which
+        cannot be done in __init__ (synchronous).  _client is therefore set to
+        None here and initialised lazily on the first DB call via
+        ``_get_client()``.
 
         Args:
             url: Supabase project URL (SUPABASE_URL env var).
             service_role_key: Service-role key (SUPABASE_SERVICE_ROLE_KEY env var).
 
         Raises:
-            ImportError: If supabase-py is not installed.
             ValueError: If url or service_role_key is None/empty.
         """
         if not url or not service_role_key:
             raise ValueError(
                 "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in .env"
             )
+        self._url = url
+        self._service_role_key = service_role_key
+        self._client = None  # lazily initialised in _get_client()
+        logger.info("supabase_provider_created", extra={"url": url[:40]})
 
-        from supabase import create_client
+    async def _get_client(self):
+        """
+        Return the cached AsyncClient, creating it on first call.
 
-        self._client = create_client(url, service_role_key)
-        logger.info("supabase_client_initialised", extra={"url": url[:40]})
+        Uses acreate_client() so the underlying httpx.AsyncClient session is
+        properly initialised inside the running event loop.  Subsequent calls
+        return the cached instance (no reconnect overhead).
+
+        Returns:
+            supabase.AsyncClient: Ready-to-use async Supabase client.
+        """
+        if self._client is None:
+            from supabase import acreate_client
+
+            self._client = await acreate_client(self._url, self._service_role_key)
+            logger.info(
+                "supabase_async_client_initialised", extra={"url": self._url[:40]}
+            )
+        return self._client
 
     # ── write operations ──────────────────────────────────────────────────────
 
@@ -109,7 +146,8 @@ class SupabaseDBProvider(DBProvider):
         claim_id = claim_data.get("id", "")
         logger.info("supabase_save_claim", extra={"claim_id": claim_id})
 
-        response = self._client.table("claims").insert(claim_data).execute()
+        client = await self._get_client()
+        response = await client.table("claims").insert(claim_data).execute()
 
         if not response.data:
             raise RuntimeError(f"Supabase insert returned no data for claim {claim_id}")
@@ -138,7 +176,8 @@ class SupabaseDBProvider(DBProvider):
             extra={"claim_id": claim_id, "status": status},
         )
 
-        self._client.table("claims").update({"status": status}).eq(
+        client = await self._get_client()
+        await client.table("claims").update({"status": status}).eq(
             "id", claim_id
         ).execute()
 
@@ -178,11 +217,9 @@ class SupabaseDBProvider(DBProvider):
             extra={"claim_id": claim_id, "fields": list(payload.keys())},
         )
 
+        client = await self._get_client()
         response = (
-            self._client.table("claims")
-            .update(payload)
-            .eq("id", claim_id)
-            .execute()
+            await client.table("claims").update(payload).eq("id", claim_id).execute()
         )
 
         if not response.data:
@@ -212,7 +249,10 @@ class SupabaseDBProvider(DBProvider):
         """
         logger.debug("supabase_get_claim", extra={"claim_id": claim_id})
 
-        response = self._client.table("claims").select("*").eq("id", claim_id).execute()
+        client = await self._get_client()
+        response = (
+            await client.table("claims").select("*").eq("id", claim_id).execute()
+        )
 
         if not response.data:
             logger.debug("supabase_get_claim_not_found", extra={"claim_id": claim_id})
@@ -237,8 +277,9 @@ class SupabaseDBProvider(DBProvider):
         """
         logger.info("supabase_get_claims_by_status", extra={"status": status})
 
+        client = await self._get_client()
         response = (
-            self._client.table("claims")
+            await client.table("claims")
             .select("*")
             .eq("status", status)
             .order("created_at", desc=True)
@@ -271,9 +312,10 @@ class SupabaseDBProvider(DBProvider):
         """
         logger.debug("supabase_get_claim_count", extra={"pnr": pnr, "days": days})
 
+        client = await self._get_client()
         # Supabase supports Postgres interval syntax directly
         response = (
-            self._client.table("claims")
+            await client.table("claims")
             .select("id", count="exact")
             .eq("pnr", pnr)
             .gte("created_at", f"now() - interval '{days} days'")
@@ -306,8 +348,9 @@ class SupabaseDBProvider(DBProvider):
         """
         logger.debug("supabase_get_hashes", extra={"pnr": pnr})
 
+        client = await self._get_client()
         response = (
-            self._client.table("image_hashes")
+            await client.table("image_hashes")
             .select("hash_value")
             .eq("pnr", pnr)
             .execute()

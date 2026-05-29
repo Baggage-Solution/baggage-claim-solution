@@ -144,7 +144,9 @@ class A1ConversationAgent(BaseAgent):
         # 4. Blurry retries — but if we can offer manual entry, prefer that prompt.
         if state.re_request_tag:
             if state.offer_manual_entry:
-                return steps.get("tag_unreadable_offer_manual", steps.get("re_request_tag", ""))
+                return steps.get(
+                    "tag_unreadable_offer_manual", steps.get("re_request_tag", "")
+                )
             return steps.get("re_request_tag", "")
         if state.re_request_damage:
             return steps.get("re_request_damage", "")
@@ -188,7 +190,9 @@ class A1ConversationAgent(BaseAgent):
             and state.damage_types
             and state.tag_data_complete
         ):
-            return steps.get("combined_photo_received", steps.get("tag_photo_received", ""))
+            return steps.get(
+                "combined_photo_received", steps.get("tag_photo_received", "")
+            )
 
         # 7. Dedicated tag photo received.
         if has_tag_images and state.conversation_step in (
@@ -279,6 +283,18 @@ class A1ConversationAgent(BaseAgent):
         return STEPS[min(current_index + 1, len(STEPS) - 1)]
 
     async def handle(self, state: ClaimState, tasks: List[str]) -> ClaimState:
+        """Run the A1 conversation agent for one passenger turn.
+
+        Selects the correct step prompt based on current pipeline state,
+        calls the LLM, updates state.a1_response and advances conversation_step.
+
+        Args:
+            state: The shared ClaimState from the LangGraph pipeline.
+            tasks: Unused — present for BaseAgent interface compliance.
+
+        Returns:
+            ClaimState: Updated state with a1_response and next conversation_step.
+        """
         logger.info(
             "a1_started",
             extra={

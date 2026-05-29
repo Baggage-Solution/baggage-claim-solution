@@ -80,6 +80,10 @@ class A4DecisionAgent(BaseAgent):
             logger.debug("phash_check_skipped — no damage images")
             return
 
+        if self._db is None:
+            logger.warning("phash_check_skipped — DB not configured (no Supabase credentials)")
+            return
+
         try:
             import imagehash
             from PIL import Image
@@ -127,6 +131,10 @@ class A4DecisionAgent(BaseAgent):
             logger.debug("frequency_check_skipped — no PNR in state")
             return
 
+        if self._db is None:
+            logger.warning("frequency_check_skipped — DB not configured (no Supabase credentials)")
+            return
+
         try:
             count = await self._db.get_claim_count(
                 state.pnr,
@@ -158,6 +166,20 @@ class A4DecisionAgent(BaseAgent):
             )
 
     async def handle(self, state: ClaimState, tasks: List[str]) -> ClaimState:
+        """Run fraud checks, routing decision, and claim persistence.
+
+        Steps: guard against incomplete/no-damage claims → pHash duplicate
+        detection → claim frequency check → final compensation calculation →
+        Lane 1 or Lane 2 routing → persist claim to database.
+
+        Args:
+            state: The shared ClaimState from the LangGraph pipeline.
+            tasks: Unused — present for BaseAgent interface compliance.
+
+        Returns:
+            ClaimState: Updated state with claim_id, routing_lane, fraud_score,
+                and final_compensation_usd.
+        """
         logger.info(
             "a4_started",
             extra={
@@ -177,10 +199,7 @@ class A4DecisionAgent(BaseAgent):
         damage_images = [p for p in state.image_paths if "tag" not in p.lower()]
         tag_images = [p for p in state.image_paths if "tag" in p.lower()]
         have_tag_data = bool(
-            tag_images
-            or state.tag_data_complete
-            or state.flight_number
-            or state.bag_id
+            tag_images or state.tag_data_complete or state.flight_number or state.bag_id
         )
 
         if state.image_paths and (not damage_images or not have_tag_data):
@@ -268,7 +287,15 @@ class A4DecisionAgent(BaseAgent):
 
             # Step 6 — Persist to DB
             claim_dict = _state_to_claim_dict(state)
-            await self._db.save_claim(claim_dict)
+            if self._db is not None:
+                await self._db.save_claim(claim_dict)
+            else:
+                logger.warning(
+                    "a4_db_save_skipped — DB not configured; claim processed "
+                    "in memory only. Set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY "
+                    "in .env to enable persistence.",
+                    extra={"claim_id": state.claim_id},
+                )
 
             # Step 7 — Debug logging
             state.add_debug("a4_lane", state.routing_lane)

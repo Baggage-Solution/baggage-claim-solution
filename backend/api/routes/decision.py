@@ -15,6 +15,12 @@ logger = logging.getLogger(__name__)
 
 
 class DecisionRequest(BaseModel):
+    """Request body for the agent dashboard approve/reject action.
+
+    Sent by the Dashboard React page when a staff member clicks Approve
+    or Reject. agent_id is logged for audit purposes.
+    """
+
     claim_id: str
     action: str  # "approve" | "reject"
     agent_id: str
@@ -23,6 +29,12 @@ class DecisionRequest(BaseModel):
 
 
 class DecisionResponse(BaseModel):
+    """Response returned after a staff decision is persisted.
+
+    Returns the final compensation and voucher_code so the dashboard
+    and polling simulator can update without a second fetch.
+    """
+
     claim_id: str
     status: str
     message: str
@@ -60,6 +72,14 @@ async def agent_decision(payload: DecisionRequest) -> DecisionResponse:
         )
 
     db = provide_db()
+
+    if db is None:
+        return DecisionResponse(
+            claim_id=payload.claim_id,
+            status="error",
+            message="Database not configured — set SUPABASE_URL and "
+                    "SUPABASE_SERVICE_ROLE_KEY in .env to enable claim persistence.",
+        )
 
     # Look up the existing claim so we can fall back to its current compensation
     # when the agent did not edit the amount.
@@ -129,8 +149,18 @@ async def get_pending_claims():
     """
     Return all AWAITING_REVIEW claims for the agent dashboard.
     Called by the Dashboard React page on load and on refresh. Newest first.
+
+    Returns an empty list if DB is not configured (missing Supabase credentials)
+    so the dashboard renders cleanly instead of showing a backend error.
     """
     db = provide_db()
+    if db is None:
+        return {
+            "claims": [],
+            "count": 0,
+            "warning": "Database not configured — set SUPABASE_URL and "
+                       "SUPABASE_SERVICE_ROLE_KEY in .env to enable claim persistence.",
+        }
     claims = await db.get_claims_by_status("AWAITING_REVIEW")
     return {"claims": claims, "count": len(claims)}
 
@@ -153,6 +183,8 @@ async def get_claim_status(claim_id: str):
         found=False if the claim_id is unknown.
     """
     db = provide_db()
+    if db is None:
+        return {"found": False, "claim_id": claim_id}
     claim = await db.get_claim(claim_id)
 
     if claim is None:

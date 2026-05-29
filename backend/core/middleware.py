@@ -6,8 +6,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from backend.core.logging import (bind_request_id, generate_request_id,
-                                  reset_request_id)
+from backend.core.logging import bind_request_id, generate_request_id, reset_request_id
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
@@ -18,6 +17,16 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
+        """Assign a request_id, bind it to context, and add it to response headers.
+
+        Args:
+            request: Incoming Starlette request.
+            call_next: ASGI middleware chain callable.
+
+        Returns:
+            Response: The downstream response with x-request-id and
+                x-response-time-ms headers appended.
+        """
         request_id = request.headers.get("x-request-id") or generate_request_id()
         start = time.perf_counter()
         token = bind_request_id(request_id)

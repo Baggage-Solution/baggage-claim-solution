@@ -13,6 +13,18 @@ logger = logging.getLogger(__name__)
 
 @router.get("/health")
 async def health_check(response: Response) -> Dict[str, Any]:
+    """Return the application health status and active provider configuration.
+
+    Returns HTTP 200 with status="ok" when all critical integrations are
+    configured (GEMINI_API_KEY + SUPABASE_URL/KEY). Returns HTTP 503 with
+    status="degraded" if any are missing — useful for liveness probes.
+
+    Args:
+        response: FastAPI Response object used to set HTTP status code.
+
+    Returns:
+        Dict with status, service name, env, provider names, and config flags.
+    """
     settings = get_settings()
 
     gemini_configured = bool(settings.gemini_api_key)

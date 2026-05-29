@@ -25,8 +25,15 @@ export default function Dashboard() {
     setError(null)
     try {
       const res = await fetch('/claims/pending')
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`)
+      }
       const data = await res.json()
       setClaims(data.claims || [])
+      // Surface a configuration warning as a non-fatal info banner
+      if (data.warning) {
+        setError(`ℹ️ ${data.warning}`)
+      }
     } catch {
       setError('Failed to load claims — is the backend running?')
     } finally {
@@ -149,7 +156,7 @@ export default function Dashboard() {
         {loading && <p className="text-center text-gray-500">Loading claims...</p>}
 
         {error && (
-          <div className="rounded-lg bg-red-50 p-4 text-red-700">{error}</div>
+          <div className={`rounded-lg p-4 ${error.startsWith('ℹ️') ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-700'}`}>{error}</div>
         )}
 
         {!loading && !error && claims.length === 0 && (

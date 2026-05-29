@@ -134,6 +134,20 @@ class A3OCRAgent(BaseAgent):
         return bool(state.flight_number or state.bag_id)
 
     async def handle(self, state: ClaimState, tasks: List[str]) -> ClaimState:
+        """Run OCR extraction on all available bag tag sources.
+
+        Processes tag data in priority order: (1) manual entry if present,
+        (2) dedicated tag photos (filename contains "tag"), (3) tag candidates
+        from damage photos identified by A2. Writes flight_number, pnr, bag_id,
+        and ocr_confidence to state.
+
+        Args:
+            state: The shared ClaimState from the LangGraph pipeline.
+            tasks: Unused — present for BaseAgent interface compliance.
+
+        Returns:
+            ClaimState: Updated state with OCR results and tag_data_complete flag.
+        """
         logger.info("a3_started", extra={"component": "A3"})
 
         try:
