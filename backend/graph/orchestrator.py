@@ -155,7 +155,13 @@ def _build_graph() -> StateGraph:
         """
         damage_paths = [p for p in state.image_paths if "tag" not in p.lower()]
         tag_paths = [p for p in state.image_paths if "tag" in p.lower()]
-        has_both = bool(damage_paths and tag_paths)
+        # Tag data can come from a dedicated tag photo, a tag spotted inside a
+        # damage photo (issue #2/#4), or manual entry (issue #3). Any of these
+        # counts as "we have the tag side of the claim".
+        have_tag_data = bool(
+            tag_paths or state.tag_data_complete or state.flight_number or state.bag_id
+        )
+        has_both = bool(damage_paths and have_tag_data)
         passenger_confirmed = state.conversation_step == "result"
 
         if has_both and passenger_confirmed:
@@ -244,6 +250,14 @@ class ClaimOrchestrator:
         conversation_history: list | None = None,
         conversation_step: str = "greeting",
         conversation_ended: bool = False,
+        no_damage_detected: bool = False,
+        # Issue #1 — object gate
+        not_a_bag: bool = False,
+        last_object_description: str | None = None,
+        non_bag_attempts: int = 0,
+        # Issue #2/#4 — tag in damage photo
+        tag_in_damage_photo: bool = False,
+        tag_candidate_paths: list[str] | None = None,
         # A2 echoed results
         processed_damage_paths: list[str] | None = None,
         damage_types: list[str] | None = None,
@@ -252,10 +266,19 @@ class ClaimOrchestrator:
         is_luxury: bool = False,
         compensation_estimate_usd: float = 0.0,
         # A3 echoed results
+        processed_tag_paths: list[str] | None = None,
         flight_number: str | None = None,
         pnr: str | None = None,
         bag_id: str | None = None,
         ocr_confidence: float = 0.0,
+        tag_data_complete: bool = False,
+        tag_manually_entered: bool = False,
+        # Issue #3 — manual tag entry
+        manual_tag_text: str | None = None,
+        manual_flight_number: str | None = None,
+        manual_pnr: str | None = None,
+        manual_bag_id: str | None = None,
+        offer_manual_entry: bool = False,
         request_id: Optional[str] = None,
     ) -> ClaimState:
         """
@@ -274,6 +297,14 @@ class ClaimOrchestrator:
             conversation_history=conversation_history or [],
             conversation_step=conversation_step,
             conversation_ended=conversation_ended,
+            no_damage_detected=no_damage_detected,
+            # Issue #1 — object gate
+            not_a_bag=not_a_bag,
+            last_object_description=last_object_description,
+            non_bag_attempts=non_bag_attempts,
+            # Issue #2/#4 — tag in damage photo
+            tag_in_damage_photo=tag_in_damage_photo,
+            tag_candidate_paths=tag_candidate_paths or [],
             # Seed A2 results from echoed frontend state
             processed_damage_paths=processed_damage_paths or [],
             damage_types=damage_types or [],
@@ -282,10 +313,19 @@ class ClaimOrchestrator:
             is_luxury=is_luxury,
             compensation_estimate_usd=compensation_estimate_usd,
             # Seed A3 results from echoed frontend state
+            processed_tag_paths=processed_tag_paths or [],
             flight_number=flight_number,
             pnr=pnr,
             bag_id=bag_id,
             ocr_confidence=ocr_confidence,
+            tag_data_complete=tag_data_complete,
+            tag_manually_entered=tag_manually_entered,
+            # Issue #3 — manual tag entry
+            manual_tag_text=manual_tag_text,
+            manual_flight_number=manual_flight_number,
+            manual_pnr=manual_pnr,
+            manual_bag_id=manual_bag_id,
+            offer_manual_entry=offer_manual_entry,
             request_id=request_id,
         )
 

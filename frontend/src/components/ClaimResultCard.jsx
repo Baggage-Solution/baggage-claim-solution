@@ -1,46 +1,72 @@
 /**
  * ClaimResultCard — terminal result card shown at the end of a claim.
  *
- * Lane 1 (auto-approved):  Green card, voucher code, "claim approved instantly".
- * Lane 2 (staff review):   Amber card, reference number, "under review" status.
+ * States:
+ *   approved      → Green card: voucher code + (edited) compensation amount.
+ *                   Used for Lane 1 instant approval AND Lane 2 staff approval.
+ *   under_review  → Amber card: reference number + "awaiting agent review".
+ *                   Lane 2 before staff act.
+ *   rejected      → Red card: reference number + rejection notice.
+ *                   Lane 2 after staff reject.
  *
- * Sits inside the chat window as the last message — styled to stand out
- * while keeping the WhatsApp aesthetic.
- *
- * @param {1|2}            lane         - Routing lane from A4 decision engine
- * @param {string|null}    voucherCode  - Lane 1 only: the compensation voucher code
- * @param {string|null}    claimId      - CLM-YYYYMMDD-XXXX reference ID from A4
+ * Props:
+ * @param {1|2}         lane         - Routing lane (1 = instant, 2 = staff review)
+ * @param {string}      status       - 'approved' | 'under_review' | 'rejected'
+ * @param {string|null} voucherCode  - Voucher code (approved only)
+ * @param {string|null} claimId      - CLM-YYYYMMDD-XXXX reference ID
+ * @param {number|null} compensation - Final/edited compensation in USD (approved)
  */
-export default function ClaimResultCard({ lane, voucherCode, claimId }) {
-  const isLane1 = lane === 1
+export default function ClaimResultCard({
+  lane,
+  status,
+  voucherCode = null,
+  claimId = null,
+  compensation = null,
+}) {
+  // Back-compat: if status is missing, infer it from the lane (old callers).
+  const resolved = status || (lane === 1 ? 'approved' : 'under_review')
 
-  return (
-    <div className="my-3 flex justify-center">
-      <div
-        className={`w-full max-w-[340px] rounded-2xl p-4 shadow-md ${
-          isLane1
-            ? 'border border-green-200 bg-gradient-to-br from-green-50 to-emerald-100'
-            : 'border border-amber-200 bg-gradient-to-br from-amber-50 to-yellow-100'
-        }`}
-      >
-        {/* Header row */}
-        <div className="mb-3 flex items-center gap-2">
-          <span className="text-2xl">{isLane1 ? '✅' : '🕐'}</span>
-          <div>
-            <p className={`text-sm font-bold ${isLane1 ? 'text-green-800' : 'text-amber-800'}`}>
-              {isLane1 ? 'Claim Approved!' : 'Claim Under Review'}
-            </p>
-            <p className={`text-xs ${isLane1 ? 'text-green-600' : 'text-amber-600'}`}>
-              {isLane1 ? 'ABC Airline · Instant Approval' : 'ABC Airline · Staff Review'}
+  if (resolved === 'rejected') {
+    return (
+      <div className="my-3 flex justify-center">
+        <div className="w-full max-w-[340px] rounded-2xl border border-red-200 bg-gradient-to-br from-red-50 to-rose-100 p-4 shadow-md">
+          <div className="mb-3 flex items-center gap-2">
+            <span className="text-2xl">❌</span>
+            <div>
+              <p className="text-sm font-bold text-red-800">Claim Not Approved</p>
+              <p className="text-xs text-red-600">ABC Airline · Staff Review</p>
+            </div>
+          </div>
+          <div className="mb-3 h-px bg-red-200" />
+          <div className="space-y-2">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-red-600">Reference Number</p>
+              <p className="font-mono text-sm font-bold text-red-800">{claimId || '—'}</p>
+            </div>
+            <p className="text-xs text-red-700">
+              After reviewing your claim, our team was unable to approve compensation in this case.
+              If you believe this is a mistake, please contact our support desk with your reference number.
             </p>
           </div>
         </div>
+      </div>
+    )
+  }
 
-        {/* Divider */}
-        <div className={`mb-3 h-px ${isLane1 ? 'bg-green-200' : 'bg-amber-200'}`} />
-
-        {/* Body */}
-        {isLane1 ? (
+  if (resolved === 'approved') {
+    return (
+      <div className="my-3 flex justify-center">
+        <div className="w-full max-w-[340px] rounded-2xl border border-green-200 bg-gradient-to-br from-green-50 to-emerald-100 p-4 shadow-md">
+          <div className="mb-3 flex items-center gap-2">
+            <span className="text-2xl">✅</span>
+            <div>
+              <p className="text-sm font-bold text-green-800">Claim Approved!</p>
+              <p className="text-xs text-green-600">
+                {lane === 1 ? 'ABC Airline · Instant Approval' : 'ABC Airline · Approved by Staff'}
+              </p>
+            </div>
+          </div>
+          <div className="mb-3 h-px bg-green-200" />
           <div className="space-y-2">
             <div>
               <p className="text-xs uppercase tracking-wide text-green-600">Voucher Code</p>
@@ -48,6 +74,14 @@ export default function ClaimResultCard({ lane, voucherCode, claimId }) {
                 {voucherCode || '—'}
               </p>
             </div>
+            {compensation != null && (
+              <div>
+                <p className="text-xs uppercase tracking-wide text-green-600">Compensation</p>
+                <p className="text-lg font-bold text-green-800">
+                  ${Number(compensation).toFixed(2)}
+                </p>
+              </div>
+            )}
             <div>
               <p className="text-xs uppercase tracking-wide text-green-600">Claim Reference</p>
               <p className="font-mono text-sm text-green-700">{claimId || '—'}</p>
@@ -56,21 +90,36 @@ export default function ClaimResultCard({ lane, voucherCode, claimId }) {
               💳 Your compensation voucher has been issued. Present this code at any ABC Airline counter or use it when booking online.
             </p>
           </div>
-        ) : (
-          <div className="space-y-2">
-            <div>
-              <p className="text-xs uppercase tracking-wide text-amber-600">Reference Number</p>
-              <p className="font-mono text-sm font-bold text-amber-800">{claimId || '—'}</p>
-            </div>
-            <p className="text-xs text-amber-700">
-              🔍 Our team is reviewing your claim. You will receive a decision within 24–48 hours. Please save your reference number above.
-            </p>
-            <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-amber-200/60 px-3 py-2">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
-              <p className="text-xs font-medium text-amber-800">Awaiting agent review</p>
-            </div>
+        </div>
+      </div>
+    )
+  }
+
+  // under_review (Lane 2, awaiting staff)
+  return (
+    <div className="my-3 flex justify-center">
+      <div className="w-full max-w-[340px] rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-yellow-100 p-4 shadow-md">
+        <div className="mb-3 flex items-center gap-2">
+          <span className="text-2xl">🕐</span>
+          <div>
+            <p className="text-sm font-bold text-amber-800">Claim Under Review</p>
+            <p className="text-xs text-amber-600">ABC Airline · Staff Review</p>
           </div>
-        )}
+        </div>
+        <div className="mb-3 h-px bg-amber-200" />
+        <div className="space-y-2">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-amber-600">Reference Number</p>
+            <p className="font-mono text-sm font-bold text-amber-800">{claimId || '—'}</p>
+          </div>
+          <p className="text-xs text-amber-700">
+            🔍 Our team is reviewing your claim. This page will update automatically once a decision is made — you can keep it open or check back later.
+          </p>
+          <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-amber-200/60 px-3 py-2">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+            <p className="text-xs font-medium text-amber-800">Awaiting agent review</p>
+          </div>
+        </div>
       </div>
     </div>
   )

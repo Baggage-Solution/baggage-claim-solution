@@ -8,127 +8,66 @@ from backend.graph.state import ClaimState
 
 logger = logging.getLogger(__name__)
 
-# Compensation scale: severity 0.0 (no damage) → $0, severity 1.0 (destroyed) → $150.
-# A4 applies 1.5× luxury multiplier on top of this estimate.
-# Threshold: LANE1_MAX_COMPENSATION_USD=100 — above this A4 routes to Lane 2.
 _SEVERITY_TO_USD_SCALE = 150.0
-
-# Minimum vision confidence for damage photos to be accepted.
-# Below this threshold the passenger is asked to retake the photos.
 _MIN_ACCEPTABLE_CONFIDENCE = 0.4
+_NO_DAMAGE_SEVERITY = 0.1
+
+# Object gate: below this bag-confidence we treat the image as "not a bag".
+# Gemini returns is_bag plus a confidence; we require BOTH a positive is_bag
+# AND reasonable confidence so a hesitant "maybe a bag" doesn't slip through.
+_MIN_BAG_CONFIDENCE = 0.5
+
+# Tag-in-damage-photo: only hand a damage image to A3 for OCR when the tag in it
+# looks legible enough to be worth a call. Per product decision: high confidence
+# only; otherwise fall back to asking for a dedicated tag photo.
+_MIN_EMBEDDED_TAG_CONFIDENCE = 0.7
+
+# After this many consecutive non-bag uploads, A1 gently ends the conversation.
+NON_BAG_ATTEMPT_LIMIT = 3
 
 
 class A2VisionAgent(BaseAgent):
     """
     Agent A2 — Vision Analysis.
 
-    Responsibilities:
-    - Analyse damage photos: identify damage types, severity, brand.
-    - Set is_luxury flag for luxury brand bags.
-    - Produce initial compensation_estimate_usd.
-    - Set re_request_damage if image quality is too low.
-
-    Provider: VisionProvider (injected — never import Gemini directly here).
-    Future swap: set VISION_PROVIDER=yolov8 in .env → yolov8_vision.py used instead.
+    Per uploaded image, in ONE Gemini call (analyze_image), A2 determines:
+      • is this luggage at all?   → object gate (issue #1)
+      • damage type + severity
+      • brand / luxury
+      • is a legible bag tag visible in the frame? → lets A3 OCR the same image
+        instead of requiring a separate tag upload (issues #2 and #4)
     """
 
     def __init__(self, vision) -> None:
         super().__init__(name="a2_vision", description="Damage vision analysis agent")
-        self._vision = vision  # VisionProvider instance
+        self._vision = vision
 
     def _is_damage_photo(self, image_path: str) -> bool:
-        """
-        Return True if this image is a damage photo (not a bag tag photo).
-
-        A3 handles paths containing 'tag' in the filename.
-        A2 processes everything else.
-
-        The filename check is reliable because webhook.py always prefixes the
-        photo_type onto the filename before saving:
-            filename = f"{photo_type}_{file.filename}"
-        So tag uploads are always saved as "tag_<name>" and damage uploads as
-        "damage_<name>". This is controlled by the backend, not the user.
-
-        Args:
-            image_path: Path string to check.
-
-        Returns:
-            True if this is a damage photo, False if it is a tag photo.
-        """
         return "tag" not in image_path.lower()
 
     def _calculate_compensation(self, severity_score: float) -> float:
-        """
-        Calculate initial compensation estimate from severity score.
-
-        Linear scale: severity 0.0 → $0.00, severity 1.0 → $150.00.
-        A4 applies 1.5× luxury multiplier on top of this.
-        LANE1_MAX_COMPENSATION_USD=100 determines Lane 1 / Lane 2 cutoff.
-
-        Args:
-            severity_score: Float 0.0–1.0 from VisionProvider.analyze_damage().
-
-        Returns:
-            Compensation estimate in USD, rounded to 2 decimal places.
-        """
         return round(severity_score * _SEVERITY_TO_USD_SCALE, 2)
 
     async def handle(self, state: ClaimState, tasks: List[str]) -> ClaimState:
-        """
-        Run vision analysis on all NEW damage photos in state.image_paths.
-
-        The frontend accumulates all uploaded paths across turns and resends
-        them every request (so A4 always has the full set for fraud checks).
-        A2 uses state.processed_damage_paths to skip images it already analysed
-        in a prior turn, preventing redundant Gemini API calls.
-
-        Steps:
-        1. Filter image_paths to damage photos (paths without 'tag' in name).
-        2. Skip any that are already in state.processed_damage_paths.
-        3. For each NEW damage photo: analyze_damage() → aggregate damage_types + severity.
-        4. classify_brand() on first NEW damage photo → brand_detected, is_luxury.
-        5. If confidence too low across all new photos → re_request_damage = True.
-        6. Calculate compensation_estimate_usd from max severity_score.
-        7. Add newly processed paths to state.processed_damage_paths.
-
-        Args:
-            state: Current ClaimState with image_paths from /upload endpoint.
-            tasks: Reserved for future task injection — unused in A2.
-
-        Returns:
-            Updated ClaimState with A2 outputs populated.
-        """
         logger.info(
             "a2_started",
             extra={"component": "A2", "image_count": len(state.image_paths)},
         )
 
         try:
-            # ── Short-circuit: no images uploaded yet ──────────────────────────
             if not state.image_paths:
                 logger.info("a2_skipped", extra={"reason": "no_images"})
                 return state
 
-            # ── Step 1: Find all damage photos in this turn ────────────────────
             all_damage_photos = [
                 p for p in state.image_paths if self._is_damage_photo(p)
             ]
-
             if not all_damage_photos:
-                logger.info(
-                    "a2_skipped",
-                    extra={"reason": "no_damage_photos_only_tag"},
-                )
+                logger.info("a2_skipped", extra={"reason": "no_damage_photos_only_tag"})
                 return state
 
-            # ── Step 2: Filter out already-processed photos ────────────────────
-            # processed_damage_paths is echoed back from the frontend each turn,
-            # seeded from the previous response. This prevents A2 from re-calling
-            # Gemini on damage photos that were already analysed in the damage-photo
-            # turn when the frontend resends all paths on the tag-photo turn.
             already_processed = set(state.processed_damage_paths)
             damage_photos = [p for p in all_damage_photos if p not in already_processed]
-
             if not damage_photos:
                 logger.info(
                     "a2_skipped",
@@ -139,58 +78,160 @@ class A2VisionAgent(BaseAgent):
                 )
                 return state
 
-            # ── Step 3: Analyse each NEW damage photo ─────────────────────────
-            # Carry forward any results from prior turns
-            all_damage_types: List[str] = list(state.damage_types)
-            max_severity: float = state.severity_score
-            max_confidence: float = 0.0
+            # Clear per-turn flags before re-evaluating this turn's new photos.
+            state.no_damage_detected = False
+            state.re_request_damage = False
+            state.not_a_bag = False
+            state.tag_in_damage_photo = False
 
+            # ── Analyse each NEW image with the combined single-call method ───
+            scenes = []
             for image_path in damage_photos:
-                result = await self._vision.analyze_damage(image_path)
-                all_damage_types.extend(result.damage_types)
-                max_severity = max(max_severity, result.severity_score)
-                max_confidence = max(max_confidence, result.confidence)
-
+                scene = await self._vision.analyze_image(image_path)
+                scenes.append((image_path, scene))
                 logger.info(
-                    "a2_damage_analyzed",
+                    "a2_image_analyzed",
                     extra={
                         "image": image_path,
-                        "damage_types": result.damage_types,
-                        "severity": result.severity_score,
-                        "confidence": result.confidence,
+                        "is_bag": scene.is_bag,
+                        "bag_confidence": scene.bag_confidence,
+                        "object": scene.object_description,
+                        "damage_types": scene.damage_types,
+                        "severity": scene.severity_score,
+                        "tag_visible": scene.tag_visible,
+                        "tag_confidence": scene.tag_confidence,
                     },
                 )
 
-            # ── Step 4: Re-request if all new images too blurry ───────────────
-            if max_confidence < _MIN_ACCEPTABLE_CONFIDENCE:
+            # These images have now cost a Gemini call — never re-analyse them.
+            state.processed_damage_paths = list(already_processed) + damage_photos
+
+            # ── ISSUE #1: object gate ─────────────────────────────────────────
+            # An image counts as a bag if the model is confident it is luggage.
+            bag_scenes = [
+                (p, s)
+                for (p, s) in scenes
+                if s.is_bag and s.bag_confidence >= _MIN_BAG_CONFIDENCE
+            ]
+
+            if not bag_scenes:
+                # None of the new images is a bag. Do not pretend we analysed one.
+                state.non_bag_attempts += 1
+                state.not_a_bag = True
+                # Roll back: these junk images should not block a later real bag,
+                # and should not count as "damage photos" for routing.
+                state.processed_damage_paths = [
+                    p for p in state.processed_damage_paths if p not in damage_photos
+                ]
+                # Surface the best description for A1's reply.
+                state.last_object_description = next(
+                    (s.object_description for (_, s) in scenes if s.object_description),
+                    None,
+                )
+                logger.info(
+                    "a2_not_a_bag",
+                    extra={
+                        "attempts": state.non_bag_attempts,
+                        "object": state.last_object_description,
+                        "limit": NON_BAG_ATTEMPT_LIMIT,
+                    },
+                )
+                return state
+
+            # We have at least one real bag — reset the non-bag counter.
+            state.non_bag_attempts = 0
+            state.last_object_description = None
+
+            # ── ISSUE #2 / #4: tags embedded in the damage photo(s) ───────────
+            # If any bag photo also shows a legible tag, mark it for A3 to OCR.
+            tag_candidates = [
+                p
+                for (p, s) in bag_scenes
+                if s.tag_visible and s.tag_confidence >= _MIN_EMBEDDED_TAG_CONFIDENCE
+            ]
+            if tag_candidates:
+                state.tag_in_damage_photo = True
+                # Merge with any prior candidates, de-duped, excluding ones A3 already did.
+                existing = set(state.tag_candidate_paths)
+                done = set(state.processed_tag_paths)
+                state.tag_candidate_paths = [
+                    p
+                    for p in (list(existing) + tag_candidates)
+                    if p not in done
+                ]
+                logger.info(
+                    "a2_tag_in_damage_photo",
+                    extra={"candidates": state.tag_candidate_paths},
+                )
+
+            # ── Aggregate damage / brand across the bag photos ────────────────
+            all_damage_types: List[str] = list(state.damage_types)
+            max_severity: float = state.severity_score
+            max_damage_conf: float = 0.0
+            best_brand = None
+            best_is_luxury = state.is_luxury
+            best_brand_conf = -1.0
+
+            for _, s in bag_scenes:
+                all_damage_types.extend(s.damage_types)
+                max_severity = max(max_severity, s.severity_score)
+                max_damage_conf = max(max_damage_conf, s.damage_confidence)
+                if s.brand_confidence > best_brand_conf:
+                    best_brand_conf = s.brand_confidence
+                    best_brand = s.brand
+                    best_is_luxury = s.is_luxury
+
+            deduped_types = list(dict.fromkeys(all_damage_types))
+
+            # ── Re-request if the bag image was too blurry to judge ───────────
+            if max_damage_conf < _MIN_ACCEPTABLE_CONFIDENCE:
                 logger.warning(
                     "a2_low_confidence",
                     extra={
-                        "max_confidence": max_confidence,
+                        "max_confidence": max_damage_conf,
                         "threshold": _MIN_ACCEPTABLE_CONFIDENCE,
                     },
                 )
                 state.re_request_damage = True
                 return state
 
-            # ── Step 5: Brand classification (use first NEW damage photo) ──────
-            brand_result = await self._vision.classify_brand(damage_photos[0])
+            # ── No structural damage on a clear bag photo ─────────────────────
+            no_real_damage = (not deduped_types) and (max_severity <= _NO_DAMAGE_SEVERITY)
+            if no_real_damage:
+                logger.info(
+                    "a2_no_damage_detected",
+                    extra={"max_severity": max_severity, "max_confidence": max_damage_conf},
+                )
+                state.damage_types = []
+                state.severity_score = round(max_severity, 4)
+                state.compensation_estimate_usd = 0.0
+                state.no_damage_detected = True
+                # Brand still recorded — it came for free in the same call.
+                state.brand_detected = best_brand
+                state.is_luxury = best_is_luxury
+                state.add_debug("a2_images_processed", len(damage_photos))
+                state.add_debug("a2_no_damage", True)
+                logger.info(
+                    "a2_completed",
+                    extra={
+                        "component": "A2",
+                        "severity": state.severity_score,
+                        "no_damage_detected": True,
+                        "compensation_usd": state.compensation_estimate_usd,
+                    },
+                )
+                return state
 
-            # ── Step 6: Write all A2 outputs into ClaimState ───────────────────
-            # Deduplicate damage types — same type may appear across multiple photos
-            state.damage_types = list(dict.fromkeys(all_damage_types))
+            # ── Real damage found ─────────────────────────────────────────────
+            state.damage_types = deduped_types
             state.severity_score = round(max_severity, 4)
-            state.brand_detected = brand_result.brand
-            state.is_luxury = brand_result.is_luxury
+            state.brand_detected = best_brand
+            state.is_luxury = best_is_luxury
             state.compensation_estimate_usd = self._calculate_compensation(max_severity)
-
-            # ── Step 7: Mark these photos as processed ─────────────────────────
-            # Will be included in the response and echoed back by the frontend
-            # next turn to prevent re-analysis.
-            state.processed_damage_paths = list(already_processed) + damage_photos
+            state.no_damage_detected = False
 
             state.add_debug("a2_images_processed", len(damage_photos))
-            state.add_debug("a2_brand_confidence", brand_result.confidence)
+            state.add_debug("a2_brand_confidence", best_brand_conf)
 
         except Exception as exc:
             logger.exception("a2_failed")
@@ -203,6 +244,9 @@ class A2VisionAgent(BaseAgent):
                 "severity": state.severity_score,
                 "is_luxury": state.is_luxury,
                 "compensation_usd": state.compensation_estimate_usd,
+                "no_damage_detected": state.no_damage_detected,
+                "not_a_bag": state.not_a_bag,
+                "tag_in_damage_photo": state.tag_in_damage_photo,
             },
         )
         return state

@@ -9,7 +9,7 @@ from pathlib import Path
 from PIL import Image
 
 from backend.vision_provider.base import (BrandResult, DamageResult,
-                                          VisionProvider)
+                                          SceneResult, VisionProvider)
 
 logger = logging.getLogger(__name__)
 
@@ -20,84 +20,120 @@ LUXURY_BRANDS = {
     "brics",
     "zero halliburton",
     "globe-trotter",
+    "montblanc",
+    "porsche design",
 }
 
-# ── Damage analysis prompt — NEUTRAL framing ──────────────────────────────────
-# IMPORTANT: The original prompt said "Analyze this luggage DAMAGE photo" which
-# primed the model to always find damage. Gemini would then invent scratches,
-# dents, or wear on a perfectly fine bag because it was told damage exists.
+# ── Combined scene-analysis prompt ────────────────────────────────────────────
+# ONE Gemini call answers everything the pipeline needs about an image:
+#   - is it luggage at all? (object gate → fixes non-bag uploads, issue #1)
+#   - is it damaged, how badly?
+#   - what brand / luxury?
+#   - is a readable bag tag visible in the frame? (→ enables OCR on the same
+#     image, fixing "both in one photo" and "both uploaded together", #2/#4)
 #
-# This prompt is deliberately neutral: it asks the model to first determine
-# WHETHER damage is present, and only describe it if it genuinely is.
-# The "if the bag appears undamaged" instruction with explicit 0.0 requirements
-# is critical — without it the model never returns severity=0 in practice.
-DAMAGE_ANALYSIS_PROMPT = """You are a baggage inspection expert for an airline claims department.
-Your job is to objectively examine this luggage photo and determine whether the bag has suffered physical damage.
+# The prompt is deliberately NEUTRAL about damage: it must be willing to return
+# no damage on an intact bag, and must NOT call a non-bag object a bag.
+SCENE_ANALYSIS_PROMPT = """You are a baggage inspection expert for an airline claims department.
+Examine this single photo and report what you objectively see. Do not assume it shows a suitcase.
 
 Return ONLY a valid JSON object with exactly these fields:
 {
+  "is_bag": true,
+  "bag_confidence": 0.0,
+  "object_description": "",
   "damage_types": [],
   "severity_score": 0.0,
-  "confidence": 0.0
-}
-
-Rules:
-- First ask yourself: does this bag show actual physical damage? Look for structural damage only:
-  cracked or broken shell, torn or ripped fabric, broken or missing wheels, bent or broken frame,
-  broken handle or zipper, deep dents that affect structure, burns or severe staining.
-  Do NOT flag: normal wear, minor scuffs, manufacturer patterns, dirt, age marks.
-
-- damage_types: list ONLY actual structural damage visible. Use empty list [] if the bag
-  looks intact and undamaged. Do not invent or guess damage.
-  Examples: "cracked shell", "broken wheel", "torn fabric", "bent frame", "missing handle"
-
-- severity_score: float 0.0–1.0
-  0.0 = no damage visible / bag appears intact / cosmetic marks only
-  0.1–0.2 = very minor (small scratches, slight scuffs that do not affect function)
-  0.3–0.4 = minor (small dents, minor tears that do not break the bag open)
-  0.5–0.6 = moderate (cracked shell, broken handle, significant tear)
-  0.7–0.8 = severe (large cracks, broken wheels, major structural failure)
-  0.9–1.0 = destroyed / bag is not usable
-
-  CRITICAL: If the bag appears undamaged or has only surface marks, severity_score MUST be 0.0
-  or very close to it. Do not assign severity > 0.2 unless there is clear structural damage.
-
-- confidence: float 0.0–1.0 — how confident you are in the assessment.
-  Lower if the image is blurry, the bag is partially visible, or lighting is poor.
-
-Return ONLY the JSON object. No explanation, no markdown, no code blocks."""
-
-BRAND_CLASSIFICATION_PROMPT = """You are a luxury luggage brand expert.
-Analyze this luggage image and identify the brand if visible.
-
-Return ONLY a valid JSON object with exactly these fields:
-{
+  "damage_confidence": 0.0,
   "brand": null,
   "is_luxury": false,
-  "confidence": 0.0
+  "brand_confidence": 0.0,
+  "tag_visible": false,
+  "tag_confidence": 0.0
 }
 
-Rules:
-- brand: string with the brand name if clearly visible/identifiable, or null if unknown/not visible.
-- is_luxury: true only for confirmed high-end luxury brands (Rimowa, Louis Vuitton, Tumi,
-  Brics, Zero Halliburton, Globe-Trotter, Montblanc, Porsche Design).
-  false for standard brands (Samsonite, American Tourister, VIP, etc.) or if brand is unknown.
-- confidence: float 0.0–1.0 — how confident you are in the brand identification.
-  0.0 if no brand markings are visible.
+Field rules:
+
+OBJECT GATE (most important — do this first):
+- is_bag: true ONLY if the main subject is a piece of luggage / baggage —
+  a suitcase, trolley bag, duffel, backpack, travel bag, hard-shell case, etc.
+  false for anything else (a watch, phone, person, document, food, room, car,
+  random object, screenshot, etc.).
+- bag_confidence: 0.0–1.0, how sure you are about the is_bag decision.
+- object_description: 2–5 words naming what you actually see
+  (e.g. "black hard-shell suitcase", "wristwatch", "person standing", "ID card").
+
+DAMAGE (only meaningful if is_bag is true; if is_bag is false set these to empty/0.0):
+- damage_types: list ONLY actual STRUCTURAL damage visible: "cracked shell",
+  "broken wheel", "torn fabric", "bent frame", "broken handle", "broken zipper",
+  "deep dent", "burn", "severe stain". Use [] if the bag looks intact.
+  Do NOT flag normal wear, minor scuffs, manufacturer patterns, dirt, or age.
+- severity_score: 0.0–1.0.
+  0.0 = intact / cosmetic only; 0.1–0.2 = very minor scratches;
+  0.3–0.4 = minor dents/small tears; 0.5–0.6 = cracked shell/broken handle;
+  0.7–0.8 = broken wheels/major structural failure; 0.9–1.0 = destroyed.
+  If the bag appears undamaged, severity_score MUST be 0.0 or very close.
+- damage_confidence: 0.0–1.0, lower if blurry/partial/poor lighting.
+
+BRAND (only meaningful if is_bag is true):
+- brand: brand name if a logo/marking is clearly visible, else null.
+- is_luxury: true only for confirmed high-end brands (Rimowa, Louis Vuitton,
+  Tumi, Brics, Zero Halliburton, Globe-Trotter, Montblanc, Porsche Design).
+- brand_confidence: 0.0–1.0; 0.0 if no brand markings visible.
+
+BAG TAG PRESENCE:
+- tag_visible: true if an AIRLINE BAGGAGE TAG is visible in this photo — the
+  printed paper/sticker label (usually white) wrapped on the handle showing a
+  barcode and/or a flight number and bag number. Only true if it looks legible
+  enough that text could plausibly be read from it.
+- tag_confidence: 0.0–1.0, how legible the tag text appears. 0.0 if no tag.
 
 Return ONLY the JSON object. No explanation, no markdown, no code blocks."""
+
+# Kept for backwards compatibility with existing unit tests that call the
+# single-purpose methods directly.
+DAMAGE_ANALYSIS_PROMPT = """You are a baggage inspection expert for an airline claims department.
+Objectively examine this luggage photo and determine whether the bag has physical damage.
+
+Return ONLY a valid JSON object with exactly these fields:
+{"damage_types": [], "severity_score": 0.0, "confidence": 0.0}
+
+- damage_types: list ONLY actual structural damage (cracked shell, broken wheel,
+  torn fabric, bent frame, broken handle). Empty list [] if intact. Do not invent damage.
+- severity_score: 0.0 (intact/cosmetic) to 1.0 (destroyed). If undamaged, MUST be 0.0.
+- confidence: 0.0–1.0, lower if blurry or partially visible.
+
+Return ONLY the JSON object. No markdown, no code blocks."""
+
+BRAND_CLASSIFICATION_PROMPT = """You are a luxury luggage brand expert.
+Identify the luggage brand if visible.
+
+Return ONLY a valid JSON object with exactly these fields:
+{"brand": null, "is_luxury": false, "confidence": 0.0}
+
+- brand: brand name if clearly visible, else null.
+- is_luxury: true only for Rimowa, Louis Vuitton, Tumi, Brics, Zero Halliburton,
+  Globe-Trotter, Montblanc, Porsche Design. false otherwise.
+- confidence: 0.0–1.0; 0.0 if no markings visible.
+
+Return ONLY the JSON object. No markdown, no code blocks."""
 
 
 class GeminiVisionProvider(VisionProvider):
     """
-    Gemini Flash vision implementation for damage analysis and brand classification.
+    Gemini Flash vision implementation.
 
-    Uses Gemini 2.5 Flash multimodal API to analyze luggage photos.
-    POC uses free tier: 1500 requests/day, 1M tokens/day.
-    Ref: https://ai.google.dev/pricing
+    Primary method analyze_image() does the full scene analysis (object gate +
+    damage + brand + tag presence) in a SINGLE Gemini call — cheaper and more
+    consistent than the old two-call (damage + brand) approach, and it adds the
+    is_bag gate and tag_visible signal the pipeline now relies on.
 
-    Future swap: implement YOLOv8VisionProvider in yolov8_vision.py,
-    then set VISION_PROVIDER=yolov8 in .env. Zero other changes needed.
+    analyze_damage() / classify_brand() are retained as thin wrappers for
+    backwards compatibility with existing unit tests.
+
+    BUG FIX: _call_with_retry() now uses generate_content_async() instead of
+    the synchronous generate_content(), so the FastAPI event loop is never
+    blocked while waiting for Gemini responses.
     """
 
     def __init__(self, api_key: str, model: str = "gemini-2.5-flash") -> None:
@@ -130,20 +166,30 @@ class GeminiVisionProvider(VisionProvider):
         self, prompt: str, image: Image.Image, context: str
     ) -> object:
         """
-        Call Gemini with exponential backoff on 429 rate-limit errors.
-        Retries up to 3 times: 30s → 60s waits.
+        Call Gemini generate_content_async with exponential backoff on 429 errors.
+
+        BUG FIX: previously used self._model.generate_content() (synchronous),
+        which blocked the FastAPI event loop on every vision call. Now uses
+        generate_content_async() to keep the event loop free.
+
+        Args:
+            prompt: Text prompt to send alongside the image.
+            image: PIL Image to analyse.
+            context: Label for logging (e.g. "analyze_image").
+
+        Returns:
+            Gemini response object.
         """
         last_exc: Exception | None = None
-
         for attempt in range(3):
             try:
-                return self._model.generate_content([prompt, image])
+                # ✅ FIXED: async call — does not block the event loop
+                return await self._model.generate_content_async([prompt, image])
             except Exception as exc:
                 err_str = str(exc).lower()
                 is_rate_limit = (
                     "429" in str(exc) or "quota" in err_str or "rate" in err_str
                 )
-
                 if is_rate_limit and attempt < 2:
                     wait_secs = 30 * (2**attempt)
                     logger.warning(
@@ -158,35 +204,87 @@ class GeminiVisionProvider(VisionProvider):
                     await asyncio.sleep(wait_secs)
                 else:
                     raise
-
         raise last_exc
 
-    async def analyze_damage(self, image_path: str) -> DamageResult:
-        """
-        Examine a luggage photo and objectively determine whether damage is present.
+    def _resolve_luxury(self, brand_name, gemini_says_luxury: bool) -> bool:
+        brand_in_luxury_set = (
+            brand_name is not None and brand_name.lower() in LUXURY_BRANDS
+        )
+        return bool(gemini_says_luxury) or brand_in_luxury_set
 
-        Uses a neutral prompt that does not assume damage exists. Returns
-        damage_types=[] and severity_score=0.0 for undamaged bags.
-        Retries up to 3 times on 429 rate-limit errors.
+    async def analyze_image(self, image_path: str) -> SceneResult:
+        """
+        Single-pass scene analysis: object gate + damage + brand + tag presence.
         """
         logger.info(
-            "gemini_vision_analyze_damage_started",
+            "gemini_vision_analyze_image_started",
             extra={"image": image_path, "model": self._model_name},
         )
 
         image = self._load_image(image_path)
         response = await self._call_with_retry(
+            SCENE_ANALYSIS_PROMPT, image, "analyze_image"
+        )
+        parsed = self._parse_json_response(response.text, "analyze_image")
+
+        brand_raw = parsed.get("brand")
+        brand_name = brand_raw if brand_raw and str(brand_raw).lower() != "null" else None
+        is_bag = bool(parsed.get("is_bag", False))
+
+        # If the model says it is NOT a bag, force damage/brand to neutral so a
+        # non-bag image can never be mistaken for an intact bag downstream.
+        damage_types = parsed.get("damage_types", []) if is_bag else []
+        severity = float(parsed.get("severity_score", 0.0)) if is_bag else 0.0
+
+        result = SceneResult(
+            is_bag=is_bag,
+            bag_confidence=float(parsed.get("bag_confidence", 0.0)),
+            object_description=str(parsed.get("object_description", "") or ""),
+            damage_types=damage_types,
+            severity_score=severity,
+            damage_confidence=float(parsed.get("damage_confidence", 0.0)),
+            brand=brand_name if is_bag else None,
+            is_luxury=self._resolve_luxury(brand_name, parsed.get("is_luxury", False))
+            if is_bag
+            else False,
+            brand_confidence=float(parsed.get("brand_confidence", 0.0)),
+            tag_visible=bool(parsed.get("tag_visible", False)),
+            tag_confidence=float(parsed.get("tag_confidence", 0.0)),
+            raw_description=response.text,
+        )
+
+        logger.info(
+            "gemini_vision_analyze_image_completed",
+            extra={
+                "image": image_path,
+                "is_bag": result.is_bag,
+                "bag_confidence": result.bag_confidence,
+                "object": result.object_description,
+                "damage_types": result.damage_types,
+                "severity_score": result.severity_score,
+                "tag_visible": result.tag_visible,
+                "tag_confidence": result.tag_confidence,
+            },
+        )
+        return result
+
+    async def analyze_damage(self, image_path: str) -> DamageResult:
+        """Backwards-compatible damage-only path (used by existing unit tests)."""
+        logger.info(
+            "gemini_vision_analyze_damage_started",
+            extra={"image": image_path, "model": self._model_name},
+        )
+        image = self._load_image(image_path)
+        response = await self._call_with_retry(
             DAMAGE_ANALYSIS_PROMPT, image, "analyze_damage"
         )
         parsed = self._parse_json_response(response.text, "analyze_damage")
-
         result = DamageResult(
             damage_types=parsed.get("damage_types", []),
             severity_score=float(parsed.get("severity_score", 0.0)),
             confidence=float(parsed.get("confidence", 0.0)),
             raw_description=response.text,
         )
-
         logger.info(
             "gemini_vision_analyze_damage_completed",
             extra={
@@ -196,40 +294,26 @@ class GeminiVisionProvider(VisionProvider):
                 "confidence": result.confidence,
             },
         )
-
         return result
 
     async def classify_brand(self, image_path: str) -> BrandResult:
-        """
-        Detect luggage brand and determine if it is a luxury item.
-        Retries up to 3 times on 429 rate-limit errors.
-        """
+        """Backwards-compatible brand-only path (used by existing unit tests)."""
         logger.info(
             "gemini_vision_classify_brand_started",
             extra={"image": image_path, "model": self._model_name},
         )
-
         image = self._load_image(image_path)
         response = await self._call_with_retry(
             BRAND_CLASSIFICATION_PROMPT, image, "classify_brand"
         )
         parsed = self._parse_json_response(response.text, "classify_brand")
-
         brand_raw = parsed.get("brand")
-        brand_name = brand_raw if brand_raw and brand_raw.lower() != "null" else None
-
-        gemini_says_luxury = bool(parsed.get("is_luxury", False))
-        brand_in_luxury_set = (
-            brand_name is not None and brand_name.lower() in LUXURY_BRANDS
-        )
-        is_luxury = gemini_says_luxury or brand_in_luxury_set
-
+        brand_name = brand_raw if brand_raw and str(brand_raw).lower() != "null" else None
         result = BrandResult(
             brand=brand_name,
-            is_luxury=is_luxury,
+            is_luxury=self._resolve_luxury(brand_name, parsed.get("is_luxury", False)),
             confidence=float(parsed.get("confidence", 0.0)),
         )
-
         logger.info(
             "gemini_vision_classify_brand_completed",
             extra={
@@ -239,5 +323,4 @@ class GeminiVisionProvider(VisionProvider):
                 "confidence": result.confidence,
             },
         )
-
         return result
