@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+# ── Windows asyncio fix — MUST be the very first thing in this file ──────────
+# uvicorn --reload spawns a child worker process. The policy must be set at
+# module import time inside that worker, before uvicorn creates its event loop.
+# Setting it in a run.py or __main__ guard is too late when --reload is used.
+import asyncio
+import sys
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+# ─────────────────────────────────────────────────────────────────────────────
+
 import os
 
 from fastapi import FastAPI

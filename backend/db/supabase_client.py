@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
+
+from supabase import acreate_client  # ← moved to top-level import
 
 from backend.db.base import DBProvider
 
 logger = logging.getLogger(__name__)
+
+_MAX_CONNECT_ATTEMPTS = 3
+_RETRY_DELAY_SECONDS = 1.0
 
 
 class SupabaseDBProvider(DBProvider):
@@ -113,31 +119,41 @@ class SupabaseDBProvider(DBProvider):
         properly initialised inside the running event loop.  Subsequent calls
         return the cached instance (no reconnect overhead).
 
-        BUG FIX: on any exception during client creation, self._client is reset
-        to None so the next call retries the handshake rather than reusing a
-        half-initialised or dead httpx session. Without this reset, a transient
-        DNS failure (getaddrinfo failed) would leave self._client pointing at a
-        broken object, making every subsequent call fail even after the network
-        recovers — causing the intermittent dashboard error.
+        Retries up to _MAX_CONNECT_ATTEMPTS times with a short delay to handle
+        transient DNS failures ([Errno 11001] getaddrinfo failed) that occur on
+        cold start in some environments.  On any exception self._client is reset
+        to None so the next request retries the handshake rather than reusing a
+        half-initialised or dead httpx session.
 
         Returns:
             supabase.AsyncClient: Ready-to-use async Supabase client.
 
         Raises:
-            Exception: Re-raises the original error after resetting self._client.
+            Exception: Re-raises the last error after exhausting all retries.
         """
-        if self._client is None:
-            from supabase import acreate_client
+        if self._client is not None:
+            return self._client
+
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, _MAX_CONNECT_ATTEMPTS + 1):
             try:
                 self._client = await acreate_client(self._url, self._service_role_key)
                 logger.info(
-                    "supabase_async_client_initialised", extra={"url": self._url[:40]}
+                    "supabase_async_client_initialised",
+                    extra={"url": self._url[:40], "attempt": attempt},
                 )
-            except Exception:
-                # Reset so the next request retries instead of reusing a broken client.
-                self._client = None
-                raise
-        return self._client
+                return self._client
+            except Exception as exc:
+                last_exc = exc
+                self._client = None  # ensure next call retries cleanly
+                logger.warning(
+                    "supabase_connect_attempt_failed",
+                    extra={"attempt": attempt, "max": _MAX_CONNECT_ATTEMPTS, "error": str(exc)},
+                )
+                if attempt < _MAX_CONNECT_ATTEMPTS:
+                    await asyncio.sleep(_RETRY_DELAY_SECONDS)
+
+        raise last_exc  # type: ignore[misc]
 
     # ── write operations ──────────────────────────────────────────────────────
 
