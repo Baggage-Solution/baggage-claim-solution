@@ -7,12 +7,9 @@ import TypingIndicator from './TypingIndicator.jsx'
  * ChatWindow — scrollable message list with WhatsApp wallpaper background.
  * Auto-scrolls to the newest message on every render.
  *
- * T-013 update: accepts isLoading (shows TypingIndicator) and claimResult
- * (renders the terminal ClaimResultCard after the final bot message).
- *
  * @param {Array}       messages    - Array of message objects
  * @param {boolean}     isLoading   - True while awaiting webhook response
- * @param {object|null} claimResult - { lane, voucherCode, claimId } or null
+ * @param {object|null} claimResult - { lane, status, voucherCode, claimId, compensation } or null
  */
 export default function ChatWindow({ messages, isLoading, claimResult }) {
   const bottomRef = useRef(null)
@@ -36,12 +33,15 @@ export default function ChatWindow({ messages, isLoading, claimResult }) {
       {/* Typing indicator — shown while awaiting AI reply */}
       {isLoading && <TypingIndicator />}
 
-      {/* Terminal result card — shown after A4 routes the claim */}
+      {/* Terminal result card — shown after A4 routes the claim, and updated
+          live when a Lane 2 claim is approved/rejected by staff. */}
       {claimResult && (
         <ClaimResultCard
           lane={claimResult.lane}
+          status={claimResult.status}
           voucherCode={claimResult.voucherCode}
           claimId={claimResult.claimId}
+          compensation={claimResult.compensation}
         />
       )}
 

@@ -11,9 +11,8 @@ import { useClaimFlow } from '../hooks/useClaimFlow.js'
  *
  * QR context (T-018): reads ?airport=&terminal=&auto=1 from the URL.
  *
- * Manual tag entry (issue #3): when the backend sets offer_manual_entry, the
- * hook flips showManualEntry true and a structured ManualTagEntry form appears
- * above the input bar. The passenger can also just type the details in chat.
+ * Session persists across reloads (localStorage); a Lane 2 claim polls for the
+ * staff decision and updates the result card to approved/rejected.
  */
 export default function Simulator() {
   const [inputValue, setInputValue] = useState('')
@@ -38,6 +37,7 @@ export default function Simulator() {
     submitManualTag,
     handleFileSelect,
     removePendingImage,
+    resetClaim,
   } = useClaimFlow({ airport, terminal })
 
   useEffect(() => {
@@ -70,19 +70,35 @@ export default function Simulator() {
     }
   }
 
+  const isFinished =
+    claimResult &&
+    (claimResult.lane === 1 ||
+      claimResult.status === 'approved' ||
+      claimResult.status === 'rejected')
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-700">
-      <div className="flex h-[700px] w-[400px] flex-col overflow-hidden rounded-2xl shadow-2xl">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-gray-700 py-6">
 
-        <div className="absolute right-4 top-4 z-10 hidden rounded-full bg-black/40 px-2 py-0.5 text-[10px] text-white md:block">
-          step: {step}
-        </div>
-
-        {airport && terminal && (
-          <div className="absolute left-4 top-4 z-10 rounded-full bg-blue-500/80 px-2 py-0.5 text-[10px] text-white">
+      {/* Toolbar above the phone — keeps controls off the chat header */}
+      <div className="flex w-[400px] items-center justify-between px-1">
+        {airport && terminal ? (
+          <span className="rounded-full bg-blue-500/80 px-3 py-1 text-xs font-medium text-white">
             ✈ {airport} · Terminal {terminal}
-          </div>
+          </span>
+        ) : (
+          <a
+            href="/dashboard"
+            className="rounded-full bg-black/30 px-3 py-1 text-xs font-medium text-white hover:bg-black/50"
+          >
+            Dashboard →
+          </a>
         )}
+        <span className="rounded-full bg-black/30 px-3 py-1 text-xs font-medium text-white">
+          step: {step}
+        </span>
+      </div>
+
+      <div className="relative flex h-[700px] w-[400px] flex-col overflow-hidden rounded-2xl shadow-2xl">
 
         <ChatHeader />
 
@@ -92,7 +108,6 @@ export default function Simulator() {
           claimResult={claimResult}
         />
 
-        {/* Manual tag-entry form — shown when backend offers it (issue #3) */}
         {showManualEntry && !inputDisabled && (
           <ManualTagEntry
             onSubmit={submitManualTag}
@@ -101,20 +116,28 @@ export default function Simulator() {
           />
         )}
 
-        <ImageUploadPreview
-          files={pendingImages}
-          onRemove={removePendingImage}
-        />
+        <ImageUploadPreview files={pendingImages} onRemove={removePendingImage} />
 
-        <ChatInput
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onSend={onSend}
-          onKeyDown={onKeyDown}
-          onFileSelect={handleFileSelect}
-          disabled={inputDisabled || isLoading}
-          hasPendingImages={pendingImages.length > 0}
-        />
+        {isFinished ? (
+          <div className="bg-[#F0F0F0] px-3 py-3">
+            <button
+              onClick={resetClaim}
+              className="w-full rounded-full bg-[#075E54] py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#128C7E]"
+            >
+              Start a new claim
+            </button>
+          </div>
+        ) : (
+          <ChatInput
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onSend={onSend}
+            onKeyDown={onKeyDown}
+            onFileSelect={handleFileSelect}
+            disabled={inputDisabled || isLoading}
+            hasPendingImages={pendingImages.length > 0}
+          />
+        )}
       </div>
     </div>
   )

@@ -1,17 +1,35 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
  * useClaimFlow — manages the full baggage claim conversation.
  *
  * State is echoed back to the backend each turn (LangGraph MemorySaver does not
- * persist plain dataclass fields between ainvoke calls). New in this version:
- *   - not_a_bag / non_bag_attempts / last_object_description (issue #1)
- *   - tag_in_damage_photo / tag_candidate_paths (issues #2 & #4)
- *   - tag_data_complete / tag_manually_entered / offer_manual_entry (issue #3)
- *   - manual tag entry via submitManualTag()
+ * persist plain dataclass fields between ainvoke calls).
+ *
+ * Session restore semantics (intentional):
+ *   - The session snapshot is written to sessionStorage on every change.
+ *   - It is ONLY restored when the user arrives from the dashboard. The
+ *     Dashboard sets a one-time flag (RETURN_FLAG) in sessionStorage right
+ *     before it navigates to the simulator. On load the hook restores the
+ *     snapshot only if that flag is present, then immediately consumes it.
+ *   - A fresh page load, a manual refresh, or a server (uvicorn) restart has
+ *     NO flag, so the simulator starts clean with the greeting — which is the
+ *     behaviour we want. (The snapshot is also cleared on a clean start.)
+ *
+ * Lane 2 resolution:
+ *   - When a claim is routed to Lane 2 ("under review"), the hook polls
+ *     GET /claims/{id}/status. Once staff approve/reject in the dashboard, the
+ *     card flips to approved (green, voucher + edited compensation) or rejected
+ *     (red). Returning to the simulator from the dashboard restores this claim
+ *     so the decision is visible.
  */
 
 const BACKEND = 'http://localhost:8000'
+const STORAGE_KEY = 'abc_claim_session_v1'
+// Set by the Dashboard immediately before it navigates back to the simulator.
+// Its presence is what authorises a one-time session restore.
+const RETURN_FLAG = 'abc_return_to_sim'
+const POLL_INTERVAL_MS = 4000
 
 function makeSessionId() {
   return `sim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -29,57 +47,169 @@ function userMsg(text, extra = {}) {
   return { id: crypto.randomUUID(), sender: 'user', text, timestamp: nowTime(), ...extra }
 }
 
+const GREETING = botMsg(
+  '👋 Hello! I\'m the ABC Airline baggage claim assistant. I\'m here to help you file a damage claim quickly — no queues, no paperwork.\n\nCould you please briefly describe what happened to your bag?',
+)
+
+const DEFAULT_ECHO = {
+  conversation_ended: false,
+  no_damage_detected: false,
+  not_a_bag: false,
+  last_object_description: null,
+  non_bag_attempts: 0,
+  tag_in_damage_photo: false,
+  tag_candidate_paths: [],
+  processed_damage_paths: [],
+  damage_types: [],
+  severity_score: 0.0,
+  brand_detected: null,
+  is_luxury: false,
+  compensation_estimate_usd: 0.0,
+  processed_tag_paths: [],
+  flight_number: null,
+  pnr: null,
+  bag_id: null,
+  ocr_confidence: 0.0,
+  tag_data_complete: false,
+  tag_manually_entered: false,
+  offer_manual_entry: false,
+}
+
+// ── sessionStorage helpers ──────────────────────────────────────────────────
+//
+// loadPersisted() restores the snapshot ONLY if the dashboard set the one-time
+// return flag. This is what makes "Dashboard → Simulator" keep the session while
+// a fresh load / refresh / server restart starts clean.
+function loadPersisted() {
+  try {
+    const returning = sessionStorage.getItem(RETURN_FLAG) === '1'
+    // The flag is one-shot — consume it so a later manual refresh starts clean.
+    sessionStorage.removeItem(RETURN_FLAG)
+
+    if (!returning) {
+      // Not arriving from the dashboard → discard any stale snapshot, start fresh.
+      sessionStorage.removeItem(STORAGE_KEY)
+      return null
+    }
+
+    const raw = sessionStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+function clearPersisted() {
+  try {
+    sessionStorage.removeItem(STORAGE_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
 export function useClaimFlow({ airport = null, terminal = null } = {}) {
-  const sessionId = useRef(makeSessionId())
-  const claimIdRef = useRef(null)
-  const conversationHistory = useRef([])
-  const allUploadedPaths = useRef([])
+  // Restore any persisted session once, synchronously, so first render is correct.
+  const persisted = useRef(loadPersisted()).current
 
-  // Echoed state — persisted across turns and sent back each request.
-  const echoedState = useRef({
-    conversation_ended: false,
-    no_damage_detected: false,
-    // Issue #1 — object gate
-    not_a_bag: false,
-    last_object_description: null,
-    non_bag_attempts: 0,
-    // Issue #2/#4 — tag in damage photo
-    tag_in_damage_photo: false,
-    tag_candidate_paths: [],
-    processed_damage_paths: [],
-    // A2 results
-    damage_types: [],
-    severity_score: 0.0,
-    brand_detected: null,
-    is_luxury: false,
-    compensation_estimate_usd: 0.0,
-    // A3 results
-    processed_tag_paths: [],
-    flight_number: null,
-    pnr: null,
-    bag_id: null,
-    ocr_confidence: 0.0,
-    tag_data_complete: false,
-    tag_manually_entered: false,
-    offer_manual_entry: false,
-  })
+  const sessionId = useRef(persisted?.sessionId || makeSessionId())
+  const claimIdRef = useRef(persisted?.claimId || null)
+  const conversationHistory = useRef(persisted?.conversationHistory || [])
+  const allUploadedPaths = useRef(persisted?.allUploadedPaths || [])
+  const echoedState = useRef(persisted?.echoedState || { ...DEFAULT_ECHO })
 
-  const [messages, setMessages] = useState([
-    botMsg(
-      '👋 Hello! I\'m the ABC Airline baggage claim assistant. I\'m here to help you file a damage claim quickly — no queues, no paperwork.\n\nCould you please briefly describe what happened to your bag?',
-    ),
-  ])
-  const [step, setStep] = useState('greeting')
+  const [messages, setMessages] = useState(persisted?.messages?.length ? persisted.messages : [GREETING])
+  const [step, setStep] = useState(persisted?.step || 'greeting')
   const [isLoading, setIsLoading] = useState(false)
-  const [claimResult, setClaimResult] = useState(null)
+  const [claimResult, setClaimResult] = useState(persisted?.claimResult || null)
   const [pendingImages, setPendingImages] = useState([])
-  const [inputDisabled, setInputDisabled] = useState(false)
-  // Issue #3 — when true, the UI shows a manual tag-entry form.
+  const [inputDisabled, setInputDisabled] = useState(persisted?.inputDisabled || false)
   const [showManualEntry, setShowManualEntry] = useState(false)
+
+  // ── Persist a snapshot whenever meaningful state changes ──────────────────
+  useEffect(() => {
+    try {
+      // Strip blob: preview URLs — they are invalid after a reload anyway.
+      const persistableMessages = messages.map((m) =>
+        m.imagePreviews ? { ...m, imagePreviews: undefined } : m,
+      )
+      sessionStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          sessionId: sessionId.current,
+          claimId: claimIdRef.current,
+          conversationHistory: conversationHistory.current,
+          allUploadedPaths: allUploadedPaths.current,
+          echoedState: echoedState.current,
+          messages: persistableMessages,
+          step,
+          claimResult,
+          inputDisabled,
+        }),
+      )
+    } catch {
+      /* quota / serialization issues are non-fatal */
+    }
+  }, [messages, step, claimResult, inputDisabled])
 
   const appendMessages = useCallback((...msgs) => {
     setMessages((prev) => [...prev, ...msgs])
   }, [])
+
+  // ── Lane 2 status polling ─────────────────────────────────────────────────
+  // While a claim is "under review" (lane 2, not yet resolved), poll the
+  // backend so the simulator reflects the staff decision once it happens.
+  useEffect(() => {
+    const underReview =
+      claimResult && claimResult.lane === 2 && claimResult.status === 'under_review'
+    if (!underReview || !claimResult.claimId) return
+
+    let cancelled = false
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`${BACKEND}/claims/${claimResult.claimId}/status`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (cancelled || !data.found) return
+
+        if (data.status === 'RESOLVED') {
+          const resolved = {
+            lane: 2,
+            status: 'approved',
+            claimId: claimResult.claimId,
+            voucherCode: data.voucher_code || null,
+            compensation: data.compensation ?? null,
+          }
+          setClaimResult(resolved)
+          appendMessages(
+            botMsg('🎉 Good news! Your claim has been approved by our team. Your voucher details are below.'),
+          )
+        } else if (data.status === 'REJECTED') {
+          const rejected = {
+            lane: 2,
+            status: 'rejected',
+            claimId: claimResult.claimId,
+          }
+          setClaimResult(rejected)
+          appendMessages(
+            botMsg('We\'re sorry — after review, your claim could not be approved. Please see the details below. If you believe this is a mistake, you can contact our support desk.'),
+          )
+        }
+      } catch {
+        /* network blip — try again next tick */
+      }
+    }
+
+    // Poll immediately (covers the reload case where the decision already
+    // happened), then on an interval.
+    poll()
+    const id = setInterval(poll, POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [claimResult, appendMessages])
 
   const uploadFile = useCallback(async (file, photoType) => {
     const cid = claimIdRef.current || 'pending'
@@ -114,8 +244,6 @@ export function useClaimFlow({ airport = null, terminal = null } = {}) {
         airport_context: airport,
         terminal_context: terminal,
         ...echoedState.current,
-        // Manual tag entry overrides (issue #3) — only sent on the turn the
-        // passenger submits them; not persisted in echoedState afterwards.
         manual_tag_text: manual?.text ?? null,
         manual_flight_number: manual?.flight ?? null,
         manual_pnr: manual?.pnr ?? null,
@@ -163,7 +291,6 @@ export function useClaimFlow({ airport = null, terminal = null } = {}) {
           offer_manual_entry: data.offer_manual_entry ?? echoedState.current.offer_manual_entry,
         }
 
-        // Surface the manual-entry form when the backend offers it.
         setShowManualEntry(Boolean(data.offer_manual_entry))
 
         return data
@@ -201,9 +328,6 @@ export function useClaimFlow({ airport = null, terminal = null } = {}) {
     async (captionText = '') => {
       if (pendingImages.length === 0 || isLoading) return
 
-      // Only an explicit tag_photo step forces the 'tag' label. Otherwise images
-      // are uploaded as 'damage' and the backend vision gate decides whether each
-      // one is a bag and whether a readable tag is present (issues #1, #2, #4).
       const photoType = step === 'tag_photo' ? 'tag' : 'damage'
 
       appendMessages(
@@ -241,7 +365,6 @@ export function useClaimFlow({ airport = null, terminal = null } = {}) {
     [pendingImages, isLoading, step, appendMessages, uploadFile, callWebhook],
   )
 
-  // Issue #3 — submit manually typed tag details (from the form).
   const submitManualTag = useCallback(
     async ({ flight = '', pnr = '', bagId = '' }) => {
       if (isLoading || inputDisabled) return
@@ -255,11 +378,7 @@ export function useClaimFlow({ airport = null, terminal = null } = {}) {
       appendMessages(userMsg(`📝 Entered tag details: ${summary || '(none)'}`))
       setShowManualEntry(false)
       setIsLoading(true)
-      const response = await callWebhook('[Manual tag details provided]', [], {
-        flight,
-        pnr,
-        bagId,
-      })
+      const response = await callWebhook('[Manual tag details provided]', [], { flight, pnr, bagId })
       setIsLoading(false)
       if (!response) {
         appendMessages(botMsg('⚠️ Could not reach the server. Please try again.'))
@@ -277,18 +396,24 @@ export function useClaimFlow({ airport = null, terminal = null } = {}) {
   )
 
   function _handleResult(response) {
-    // Terminal — no claim filed (confirmed-fine OR repeated non-bag uploads).
     if (response.conversation_ended) {
       setInputDisabled(true)
       setStep('result')
       return
     }
     if (response.routing_lane === 1) {
-      setClaimResult({ lane: 1, voucherCode: response.voucher_code, claimId: response.claim_id })
+      setClaimResult({
+        lane: 1,
+        status: 'approved',
+        voucherCode: response.voucher_code,
+        claimId: response.claim_id,
+        compensation: response.compensation_estimate_usd ?? null,
+      })
       setInputDisabled(true)
       setStep('result')
     } else if (response.routing_lane === 2) {
-      setClaimResult({ lane: 2, claimId: response.claim_id })
+      // Under review — the polling effect will resolve this to approved/rejected.
+      setClaimResult({ lane: 2, status: 'under_review', claimId: response.claim_id })
       setInputDisabled(true)
       setStep('result')
     }
@@ -305,6 +430,22 @@ export function useClaimFlow({ airport = null, terminal = null } = {}) {
     setPendingImages((prev) => prev.filter((_, i) => i !== idx))
   }, [])
 
+  // Start a brand-new claim (clears persisted session).
+  const resetClaim = useCallback(() => {
+    clearPersisted()
+    sessionId.current = makeSessionId()
+    claimIdRef.current = null
+    conversationHistory.current = []
+    allUploadedPaths.current = []
+    echoedState.current = { ...DEFAULT_ECHO }
+    setMessages([GREETING])
+    setStep('greeting')
+    setClaimResult(null)
+    setInputDisabled(false)
+    setShowManualEntry(false)
+    setPendingImages([])
+  }, [])
+
   return {
     messages,
     step,
@@ -319,5 +460,6 @@ export function useClaimFlow({ airport = null, terminal = null } = {}) {
     submitManualTag,
     handleFileSelect,
     removePendingImage,
+    resetClaim,
   }
 }

@@ -193,9 +193,9 @@ export default function ClaimCard({ claim, onDecision, isProcessing }) {
 
           {/* ── Modify compensation ───────────────────────────────────── */}
           {showModify && (
-            <div className="mb-4 flex items-center gap-2 rounded bg-blue-50 px-3 py-2">
+            <div className="mb-4 flex flex-wrap items-center gap-2 rounded bg-blue-50 px-3 py-2">
               <label className="text-sm font-medium text-blue-800">
-                Modified compensation: $
+                New compensation: $
               </label>
               <input
                 type="number"
@@ -205,6 +205,9 @@ export default function ClaimCard({ claim, onDecision, isProcessing }) {
                 min="0"
                 className="w-24 rounded border border-blue-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
               />
+              <span className="text-xs text-blue-600">
+                (was ${Number(claim.compensation ?? 0).toFixed(2)})
+              </span>
             </div>
           )}
 
@@ -217,14 +220,22 @@ export default function ClaimCard({ claim, onDecision, isProcessing }) {
               disabled={isProcessing}
               className="flex-1 rounded-lg bg-green-600 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {isProcessing ? '⏳ Processing…' : '✅ Approve'}
+              {isProcessing
+                ? '⏳ Processing…'
+                : showModify
+                ? `✅ Approve $${Number(modifiedAmt || 0).toFixed(2)}`
+                : '✅ Approve'}
             </button>
 
             <button
               onClick={() => setShowModify(!showModify)}
               disabled={isProcessing}
               title="Modify compensation amount"
-              className="rounded-lg bg-blue-100 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-200 disabled:opacity-40"
+              className={`rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-40 ${
+                showModify
+                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+              }`}
             >
               ✏️
             </button>

@@ -130,6 +130,10 @@ class GeminiVisionProvider(VisionProvider):
 
     analyze_damage() / classify_brand() are retained as thin wrappers for
     backwards compatibility with existing unit tests.
+
+    BUG FIX: _call_with_retry() now uses generate_content_async() instead of
+    the synchronous generate_content(), so the FastAPI event loop is never
+    blocked while waiting for Gemini responses.
     """
 
     def __init__(self, api_key: str, model: str = "gemini-2.5-flash") -> None:
@@ -161,11 +165,26 @@ class GeminiVisionProvider(VisionProvider):
     async def _call_with_retry(
         self, prompt: str, image: Image.Image, context: str
     ) -> object:
-        """Call Gemini with exponential backoff on 429 rate-limit errors."""
+        """
+        Call Gemini generate_content_async with exponential backoff on 429 errors.
+
+        BUG FIX: previously used self._model.generate_content() (synchronous),
+        which blocked the FastAPI event loop on every vision call. Now uses
+        generate_content_async() to keep the event loop free.
+
+        Args:
+            prompt: Text prompt to send alongside the image.
+            image: PIL Image to analyse.
+            context: Label for logging (e.g. "analyze_image").
+
+        Returns:
+            Gemini response object.
+        """
         last_exc: Exception | None = None
         for attempt in range(3):
             try:
-                return self._model.generate_content([prompt, image])
+                # ✅ FIXED: async call — does not block the event loop
+                return await self._model.generate_content_async([prompt, image])
             except Exception as exc:
                 err_str = str(exc).lower()
                 is_rate_limit = (

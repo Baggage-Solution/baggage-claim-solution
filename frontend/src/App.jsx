@@ -7,14 +7,14 @@ import ManualTagEntry from './components/ManualTagEntry.jsx'
 import { useClaimFlow } from './hooks/useClaimFlow.js'
 
 /**
- * App — root component.
+ * App — root component (the simulator at "/").
  *
  * Conversation state machine steps:
  *   greeting → damage_photos → tag_photo → confirm → result
  *
- * Manual tag entry (issue #3): when the backend sets offer_manual_entry, the
- * hook flips showManualEntry true and a structured form appears above the
- * input. The passenger can also just type the details directly in chat.
+ * The session persists across reloads (localStorage) and a Lane 2 claim keeps
+ * polling for the staff decision, so the result card updates to approved/rejected
+ * without losing the conversation. "Start new claim" clears the persisted session.
  */
 export default function App() {
   const [inputValue, setInputValue] = useState('')
@@ -33,6 +33,7 @@ export default function App() {
     submitManualTag,
     handleFileSelect,
     removePendingImage,
+    resetClaim,
   } = useClaimFlow()
 
   const onSend = async () => {
@@ -53,13 +54,31 @@ export default function App() {
     }
   }
 
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-700">
-      <div className="flex h-[700px] w-[400px] flex-col overflow-hidden rounded-2xl shadow-2xl">
+  // A claim is fully finished (no more action) when it's Lane 1 approved, or a
+  // Lane 2 claim that has resolved either way.
+  const isFinished =
+    claimResult &&
+    (claimResult.lane === 1 ||
+      claimResult.status === 'approved' ||
+      claimResult.status === 'rejected')
 
-        <div className="absolute right-4 top-4 z-10 hidden rounded-full bg-black/40 px-2 py-0.5 text-[10px] text-white md:block">
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-gray-700 py-6">
+
+      {/* Toolbar above the phone — keeps controls off the chat header */}
+      <div className="flex w-[400px] items-center justify-between px-1">
+        <a
+          href="/dashboard"
+          className="rounded-full bg-black/30 px-3 py-1 text-xs font-medium text-white hover:bg-black/50"
+        >
+          Dashboard →
+        </a>
+        <span className="rounded-full bg-black/30 px-3 py-1 text-xs font-medium text-white">
           step: {step}
-        </div>
+        </span>
+      </div>
+
+      <div className="relative flex h-[700px] w-[400px] flex-col overflow-hidden rounded-2xl shadow-2xl">
 
         <ChatHeader />
 
@@ -69,7 +88,7 @@ export default function App() {
           claimResult={claimResult}
         />
 
-        {/* Manual tag-entry form — shown when backend offers it (issue #3) */}
+        {/* Manual tag-entry form — shown when backend offers it */}
         {showManualEntry && !inputDisabled && (
           <ManualTagEntry
             onSubmit={submitManualTag}
@@ -78,20 +97,29 @@ export default function App() {
           />
         )}
 
-        <ImageUploadPreview
-          files={pendingImages}
-          onRemove={removePendingImage}
-        />
+        <ImageUploadPreview files={pendingImages} onRemove={removePendingImage} />
 
-        <ChatInput
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onSend={onSend}
-          onKeyDown={onKeyDown}
-          onFileSelect={handleFileSelect}
-          disabled={inputDisabled || isLoading}
-          hasPendingImages={pendingImages.length > 0}
-        />
+        {/* When the claim is finished, replace the input bar with a reset action. */}
+        {isFinished ? (
+          <div className="bg-[#F0F0F0] px-3 py-3">
+            <button
+              onClick={resetClaim}
+              className="w-full rounded-full bg-[#075E54] py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#128C7E]"
+            >
+              Start a new claim
+            </button>
+          </div>
+        ) : (
+          <ChatInput
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onSend={onSend}
+            onKeyDown={onKeyDown}
+            onFileSelect={handleFileSelect}
+            disabled={inputDisabled || isLoading}
+            hasPendingImages={pendingImages.length > 0}
+          />
+        )}
       </div>
     </div>
   )
