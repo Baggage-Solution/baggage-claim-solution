@@ -147,6 +147,54 @@ class SupabaseDBProvider(DBProvider):
             extra={"claim_id": claim_id, "status": status},
         )
 
+    async def update_claim(
+        self, claim_id: str, fields: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Update arbitrary columns of a claim in a single write and return the row.
+
+        Called by the /decision endpoint so an agent approve/reject can persist
+        the new status, an edited compensation amount, and a voucher code all at
+        once. Always bumps updated_at so the dashboard/simulator see fresh data.
+
+        Args:
+            claim_id: Claim to update.
+            fields:   Column → value mapping to write.
+
+        Returns:
+            The updated claim dict, or None if no row matched.
+
+        Raises:
+            Exception: Re-raised from supabase-py on network/auth error.
+        """
+        if not fields:
+            return await self.get_claim(claim_id)
+
+        payload = dict(fields)
+        payload["updated_at"] = "now()"
+
+        logger.info(
+            "supabase_update_claim",
+            extra={"claim_id": claim_id, "fields": list(payload.keys())},
+        )
+
+        response = (
+            self._client.table("claims")
+            .update(payload)
+            .eq("id", claim_id)
+            .execute()
+        )
+
+        if not response.data:
+            logger.warning(
+                "supabase_update_claim_no_row",
+                extra={"claim_id": claim_id},
+            )
+            return None
+
+        logger.info("supabase_update_claim_ok", extra={"claim_id": claim_id})
+        return response.data[0]
+
     # ── read operations ───────────────────────────────────────────────────────
 
     async def get_claim(self, claim_id: str) -> Optional[Dict[str, Any]]:

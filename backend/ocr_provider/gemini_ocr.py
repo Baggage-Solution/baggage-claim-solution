@@ -59,6 +59,10 @@ class GeminiOCRProvider(OCRProvider):
     POC uses free tier: 1500 requests/day, 1M tokens/day.
     Ref: https://ai.google.dev/pricing
 
+    BUG FIX: _call_with_retry() now uses generate_content_async() instead of
+    the synchronous generate_content(), so the FastAPI event loop is never
+    blocked while waiting for Gemini responses.
+
     Future swap: set OCR_PROVIDER=paddleocr → paddleocr.py runs fully offline
     with no PII sent to any external API. Zero other changes needed.
     """
@@ -171,12 +175,18 @@ class GeminiOCRProvider(OCRProvider):
 
     async def _call_with_retry(self, image: Image.Image) -> object:
         """
-        Call Gemini generate_content with exponential backoff on 429 rate-limit errors.
+        Call Gemini generate_content_async with exponential backoff on 429 errors.
 
-        Free tier limit for gemini-2.5-flash is 5 req/min. On a tag-photo turn the
-        pipeline makes up to 4 Gemini calls in quick succession (A2 × 2 + A3 × 1 + A1 × 1),
-        which can hit this cap. With the processed_damage_paths fix A2 is skipped on the
-        tag turn, bringing it down to 2 calls — but this retry is kept as a safety net.
+        BUG FIX: previously called self._model.generate_content() (synchronous)
+        inside an async function, which blocked the FastAPI event loop. On a
+        turn where the user uploads both a damage photo and a tag photo, the
+        pipeline makes 3 Gemini calls total (A2 × 1 + A3 × 1 + A1 × 1). The
+        old synchronous calls serialised these on the event loop and each
+        blocked until Gemini responded, making the total wall-clock time ~3×
+        longer and causing the free-tier rate-limit to fire more aggressively.
+
+        Now uses generate_content_async() so the event loop stays free between
+        Gemini round-trips.
 
         Args:
             image: PIL Image to send.
@@ -192,7 +202,10 @@ class GeminiOCRProvider(OCRProvider):
 
         for attempt in range(3):
             try:
-                return self._model.generate_content([BAG_TAG_EXTRACTION_PROMPT, image])
+                # ✅ FIXED: async call — does not block the event loop
+                return await self._model.generate_content_async(
+                    [BAG_TAG_EXTRACTION_PROMPT, image]
+                )
             except Exception as exc:
                 err_str = str(exc).lower()
                 is_rate_limit = (

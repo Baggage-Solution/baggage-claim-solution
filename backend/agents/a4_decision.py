@@ -170,17 +170,27 @@ class A4DecisionAgent(BaseAgent):
             },
         )
 
-        # ── Guard 1: both image types must be present ──────────────────────────
+        # ── Guard 1: both the damage side and the tag side must be present ─────
+        # The tag side can come from a dedicated tag photo, a tag read out of a
+        # damage photo (issue #2/#4), or manual entry (issue #3). We therefore
+        # check for usable tag DATA, not just a "tag_"-named file.
         damage_images = [p for p in state.image_paths if "tag" not in p.lower()]
         tag_images = [p for p in state.image_paths if "tag" in p.lower()]
+        have_tag_data = bool(
+            tag_images
+            or state.tag_data_complete
+            or state.flight_number
+            or state.bag_id
+        )
 
-        if state.image_paths and (not damage_images or not tag_images):
+        if state.image_paths and (not damage_images or not have_tag_data):
             logger.info(
                 "a4_skipped",
                 extra={
                     "reason": "incomplete_images",
                     "damage_count": len(damage_images),
                     "tag_count": len(tag_images),
+                    "have_tag_data": have_tag_data,
                     "session_id": state.session_id,
                 },
             )

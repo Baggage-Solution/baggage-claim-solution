@@ -14,13 +14,17 @@ class WebhookResponse(BaseModel):
     conversation_step: str = "greeting"
     re_request_tag: bool = False
     re_request_damage: bool = False
-    # True when conversation is over with no claim filed (no damage confirmed).
-    # Frontend uses this to lock the input permanently.
     conversation_ended: bool = False
+    no_damage_detected: bool = False
 
-    # ── Echoed state fields ────────────────────────────────────────────────────
-    # These are returned so the frontend can echo them back on the next request,
-    # preserving A2/A3 results across turns (LangGraph does not persist them).
+    # Issue #1 — object gate
+    not_a_bag: bool = False
+    last_object_description: Optional[str] = None
+    non_bag_attempts: int = 0
+
+    # Issue #2/#4 — tag in damage photo
+    tag_in_damage_photo: bool = False
+    tag_candidate_paths: List[str] = []
 
     # A2 results
     processed_damage_paths: List[str] = []
@@ -31,9 +35,15 @@ class WebhookResponse(BaseModel):
     compensation_estimate_usd: float = 0.0
 
     # A3 results
+    processed_tag_paths: List[str] = []
     flight_number: Optional[str] = None
     pnr: Optional[str] = None
     bag_id: Optional[str] = None
     ocr_confidence: float = 0.0
+    tag_data_complete: bool = False
+    tag_manually_entered: bool = False
+
+    # Issue #3 — manual tag entry
+    offer_manual_entry: bool = False
 
     error: Optional[str] = None

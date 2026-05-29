@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import List, Optional
 
@@ -87,6 +88,59 @@ class GeminiLLMProvider(LLMProvider):
 
         return gemini_contents
 
+    async def _call_with_retry(
+        self,
+        contents: list,
+        generation_config: GenerationConfig,
+    ) -> object:
+        """
+        Call Gemini generate_content_async with exponential backoff on 429 errors.
+
+        BUG FIX: previously called self._model.generate_content() (synchronous)
+        inside an async function, which blocked the event loop and caused cascading
+        timeouts. Now uses generate_content_async() so FastAPI's event loop is
+        never blocked.
+
+        Args:
+            contents: Gemini-format contents list.
+            generation_config: GenerationConfig for temperature / max_tokens.
+
+        Returns:
+            Gemini response object.
+
+        Raises:
+            Exception: Re-raises after all retries are exhausted.
+        """
+        last_exc: Exception | None = None
+
+        for attempt in range(3):
+            try:
+                # ✅ FIXED: async call — does not block the event loop
+                return await self._model.generate_content_async(
+                    contents,
+                    generation_config=generation_config,
+                )
+            except Exception as exc:
+                err_str = str(exc).lower()
+                is_rate_limit = (
+                    "429" in str(exc) or "quota" in err_str or "rate" in err_str
+                )
+                if is_rate_limit and attempt < 2:
+                    wait_secs = 30 * (2**attempt)  # 30s → 60s
+                    logger.warning(
+                        "gemini_llm_rate_limited",
+                        extra={
+                            "attempt": attempt + 1,
+                            "wait_secs": wait_secs,
+                        },
+                    )
+                    last_exc = exc
+                    await asyncio.sleep(wait_secs)
+                else:
+                    raise
+
+        raise last_exc
+
     async def chat(
         self,
         messages: List[dict],
@@ -129,10 +183,7 @@ class GeminiLLMProvider(LLMProvider):
             max_output_tokens=1024,
         )
 
-        response = self._model.generate_content(
-            contents,
-            generation_config=generation_config,
-        )
+        response = await self._call_with_retry(contents, generation_config)
 
         # Handle Gemini safety blocks
         if not response.candidates:
