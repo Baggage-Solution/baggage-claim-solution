@@ -14,11 +14,32 @@ from httpx import ASGITransport, AsyncClient
 from backend.main import app
 
 
-def make_mock_db(claims=None):
-    """Mock DBProvider with configurable pending claims list."""
+def make_mock_db(claims=None, existing_claim=None):
+    """
+    Mock DBProvider for the dashboard endpoints.
+    /decision calls get_claim() then update_claim() — both must be AsyncMock.
+    update_claim() echoes the fields back merged onto the existing row.
+    """
     db = MagicMock()
     db.get_claims_by_status = AsyncMock(return_value=claims or [])
     db.update_claim_status = AsyncMock(return_value=None)
+
+    base = existing_claim or {
+        "id": "CLM-20260522-001",
+        "status": "AWAITING_REVIEW",
+        "compensation": 150.0,
+        "voucher_code": None,
+        "routing_lane": 2,
+    }
+    db.get_claim = AsyncMock(return_value=dict(base))
+
+    async def _update(claim_id, fields):
+        merged = dict(base)
+        merged.update(fields)
+        merged["id"] = claim_id
+        return merged
+
+    db.update_claim = AsyncMock(side_effect=_update)
     return db
 
 
@@ -97,7 +118,11 @@ async def test_approve_updates_status_to_resolved():
     data = response.json()
     assert data["status"] == "RESOLVED"
     assert data["claim_id"] == "CLM-20260522-001"
-    mock_db.update_claim_status.assert_called_once_with("CLM-20260522-001", "RESOLVED")
+    mock_db.update_claim.assert_called_once()
+    _, fields = mock_db.update_claim.call_args[0]
+    assert fields["status"] == "RESOLVED"
+    assert fields.get("voucher_code")
+    assert data["voucher_code"]
 
 
 async def test_reject_updates_status_to_rejected():
@@ -120,7 +145,9 @@ async def test_reject_updates_status_to_rejected():
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "REJECTED"
-    mock_db.update_claim_status.assert_called_once_with("CLM-20260522-002", "REJECTED")
+    mock_db.update_claim.assert_called_once()
+    _, fields = mock_db.update_claim.call_args[0]
+    assert fields["status"] == "REJECTED"
 
 
 async def test_invalid_action_returns_error_without_db_call():
@@ -141,7 +168,7 @@ async def test_invalid_action_returns_error_without_db_call():
 
     assert response.status_code == 200
     assert response.json()["status"] == "error"
-    mock_db.update_claim_status.assert_not_called()
+    mock_db.update_claim.assert_not_called()
 
 
 async def test_decision_response_includes_agent_id():

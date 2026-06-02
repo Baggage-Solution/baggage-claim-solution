@@ -28,11 +28,18 @@ FAKE_KEY = "fake-service-role-key-abc123"
 def make_provider() -> tuple[SupabaseDBProvider, MagicMock]:
     """
     Returns (provider, mock_client) — provider is fully wired to mock_client.
-    Bypasses __init__ so supabase-py does not need to be installed in CI.
+    Bypasses __init__ and _get_client so no real Supabase connection is made.
+    _get_client is patched as an AsyncMock returning mock_client, matching the
+    async Supabase client used in production (acreate_client → AsyncClient).
     """
+    from unittest.mock import AsyncMock
     mock_client = MagicMock()
     provider = SupabaseDBProvider.__new__(SupabaseDBProvider)
     provider._client = mock_client
+    provider._url = "https://fake.supabase.co"
+    provider._service_role_key = "fake-key"
+    # Patch _get_client so await self._get_client() returns mock_client directly.
+    provider._get_client = AsyncMock(return_value=mock_client)
     return provider, mock_client
 
 
@@ -46,7 +53,8 @@ def make_chain(mock_client: MagicMock, return_data=None, count: int = 0):
     mock_response.count = count
 
     chain = MagicMock()
-    chain.execute.return_value = mock_response
+    from unittest.mock import AsyncMock
+    chain.execute = AsyncMock(return_value=MagicMock(data=return_data or [], count=count))
     chain.select.return_value = chain
     chain.insert.return_value = chain
     chain.update.return_value = chain

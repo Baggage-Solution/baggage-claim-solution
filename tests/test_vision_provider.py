@@ -21,11 +21,19 @@ FIXTURE_DIR = Path("tests/fixtures/damaged")
 
 def make_provider() -> GeminiVisionProvider:
     """Create a GeminiVisionProvider with a mocked Gemini model."""
+    from unittest.mock import AsyncMock
     with patch("google.generativeai.configure"), patch(
         "google.generativeai.GenerativeModel"
     ) as mock_model_cls:
         provider = GeminiVisionProvider(api_key="test-key", model="gemini-2.5-flash")
         provider._model = mock_model_cls.return_value
+
+    # Provider now uses generate_content_async (async) instead of generate_content.
+    # Wire generate_content_async to return the same value that tests set on
+    # generate_content.return_value, so existing test setups work unchanged.
+    provider._model.generate_content_async = AsyncMock(
+        side_effect=lambda *a, **kw: provider._model.generate_content.return_value
+    )
     return provider
 
 
