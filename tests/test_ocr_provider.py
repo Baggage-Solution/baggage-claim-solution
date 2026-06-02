@@ -21,11 +21,16 @@ from backend.ocr_provider.gemini_ocr import GeminiOCRProvider
 
 def make_provider() -> GeminiOCRProvider:
     """GeminiOCRProvider with a mocked Gemini model — no API key needed."""
+    from unittest.mock import AsyncMock
     with patch("google.generativeai.configure"), patch(
         "google.generativeai.GenerativeModel"
     ) as mock_cls:
         provider = GeminiOCRProvider(api_key="test-key", model="gemini-2.5-flash")
         provider._model = mock_cls.return_value
+    # Provider now uses generate_content_async — delegate to generate_content.return_value.
+    provider._model.generate_content_async = AsyncMock(
+        side_effect=lambda *a, **kw: provider._model.generate_content.return_value
+    )
     return provider
 
 

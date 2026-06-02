@@ -213,8 +213,11 @@ async def test_a4_sets_error_on_db_failure():
 
     result = await agent.handle(state, [])
 
-    assert result.error is not None
-    assert "A4 error" in result.error
+    # A4 soft-fails on DB error: logs a warning, processes in-memory,
+    # does NOT set hard state.error so the pipeline stays alive.
+    assert result.error is None
+    # Claim is still routed correctly even without DB persistence
+    assert result.routing_lane in (1, 2)
 
 
 # ── Luxury compensation multiplier test ───────────────────────────────────────

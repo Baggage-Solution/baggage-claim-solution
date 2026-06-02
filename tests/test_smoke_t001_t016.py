@@ -69,16 +69,16 @@ def _vision(severity=0.3, confidence=0.9, is_luxury=False):
     from backend.vision_provider.base import BrandResult, DamageResult
 
     v = MagicMock()
-    v.analyze_damage = AsyncMock(
-        return_value=DamageResult(
-            damage_types=["cracked shell"],
-            severity_score=severity,
-            confidence=confidence,
-        )
-    )
-    v.classify_brand = AsyncMock(
-        return_value=BrandResult(brand="Samsonite", is_luxury=is_luxury, confidence=0.9)
-    )
+    dr = DamageResult(damage_types=["cracked shell"], severity_score=severity, confidence=confidence)
+    br = BrandResult(brand="Samsonite", is_luxury=is_luxury, confidence=0.9)
+    v.analyze_damage = AsyncMock(return_value=dr)
+    v.classify_brand = AsyncMock(return_value=br)
+    from backend.vision_provider.base import SceneResult
+    v.analyze_image = AsyncMock(return_value=SceneResult(
+        is_bag=True, bag_confidence=0.97, object_description="suitcase",
+        damage_types=list(dr.damage_types), severity_score=dr.severity_score,
+        damage_confidence=dr.confidence, brand=br.brand, is_luxury=br.is_luxury,
+        brand_confidence=br.confidence, tag_visible=False, tag_confidence=0.0))
     return v
 
 
@@ -982,48 +982,55 @@ def test_t014_supabase_raises_on_missing_url():
 async def test_t014_save_claim_calls_insert():
     """T-014: save_claim() calls table('claims').insert() exactly once."""
     from backend.db.supabase_client import SupabaseDBProvider
+    from unittest.mock import AsyncMock
 
     mock_client = MagicMock()
     chain = MagicMock()
-    chain.execute.return_value = MagicMock(data=[{"id": "CLM-TEST"}])
+    chain.execute = AsyncMock(return_value=MagicMock(data=[{"id": "CLM-TEST"}]))
     chain.insert.return_value = chain
     mock_client.table.return_value = chain
 
     provider = SupabaseDBProvider.__new__(SupabaseDBProvider)
     provider._client = mock_client
+    provider._get_client = AsyncMock(return_value=mock_client)
 
     result = await provider.save_claim({"id": "CLM-TEST", "pnr": "ABC"})
     assert result == "CLM-TEST"
     chain.insert.assert_called_once()
 
 
+
 @pytest.mark.asyncio
 async def test_t014_update_claim_status_calls_update():
     """T-014: update_claim_status() sets status column correctly."""
     from backend.db.supabase_client import SupabaseDBProvider
+    from unittest.mock import AsyncMock
 
     mock_client = MagicMock()
     chain = MagicMock()
-    chain.execute.return_value = MagicMock(data=[])
+    chain.execute = AsyncMock(return_value=MagicMock(data=[]))
     chain.update.return_value = chain
     chain.eq.return_value = chain
     mock_client.table.return_value = chain
 
     provider = SupabaseDBProvider.__new__(SupabaseDBProvider)
     provider._client = mock_client
+    provider._get_client = AsyncMock(return_value=mock_client)
 
     await provider.update_claim_status("CLM-TEST", "APPROVED")
     chain.update.assert_called_once_with({"status": "APPROVED"})
+
 
 
 @pytest.mark.asyncio
 async def test_t014_get_claim_count_returns_int():
     """T-014: get_claim_count() returns integer count from Supabase."""
     from backend.db.supabase_client import SupabaseDBProvider
+    from unittest.mock import AsyncMock
 
     mock_client = MagicMock()
     chain = MagicMock()
-    chain.execute.return_value = MagicMock(data=[], count=2)
+    chain.execute = AsyncMock(return_value=MagicMock(data=[], count=2))
     chain.select.return_value = chain
     chain.eq.return_value = chain
     chain.gte.return_value = chain
@@ -1031,14 +1038,11 @@ async def test_t014_get_claim_count_returns_int():
 
     provider = SupabaseDBProvider.__new__(SupabaseDBProvider)
     provider._client = mock_client
+    provider._get_client = AsyncMock(return_value=mock_client)
 
     result = await provider.get_claim_count("ABC123", days=30)
     assert result == 2
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# T-015  Agent A5 — Notification (Simulated)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
