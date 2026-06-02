@@ -97,13 +97,40 @@ class ClaimState:
     execution_completed: bool = False
 
     def set_error(self, message: str) -> None:
+        """Record an error message and mark execution as completed.
+
+        Called by agents when an unrecoverable error occurs. Sets the
+        error field for downstream logging and marks the graph run as done.
+
+        Args:
+            message: Human-readable error description.
+        """
         self.error = message
         self.execution_completed = True
 
     def add_debug(self, key: str, value: Any) -> None:
+        """Append a key/value pair to the debug dict for structured logging.
+
+        Used by agents to surface intermediate values (e.g. confidence scores,
+        image counts) without polluting the main state fields.
+
+        Args:
+            key: Debug field name (e.g. "a2_images_processed").
+            value: Any JSON-serialisable value.
+        """
         self.debug[key] = value
 
     def is_lane1_eligible(self) -> bool:
+        """Determine whether this claim qualifies for Lane 1 auto-approval.
+
+        Lane 1 requires ALL of:
+          - Estimated compensation <= LANE1_MAX_COMPENSATION_USD (default $100).
+          - Not a luxury brand bag.
+          - Fraud score below 0.5.
+
+        Returns:
+            bool: True if the claim can be auto-approved; False routes to Lane 2.
+        """
         from backend.config import get_settings
 
         s = get_settings()

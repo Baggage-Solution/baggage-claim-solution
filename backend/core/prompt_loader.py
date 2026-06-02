@@ -20,6 +20,18 @@ class PromptLoader:
     @classmethod
     @lru_cache(maxsize=None)
     def load(cls, name: str) -> Dict[str, Any]:
+        """Load and cache a JSON prompt template from backend/prompts/.
+
+        Args:
+            name: Template filename without extension (e.g. "a1_conversation").
+
+        Returns:
+            Dict[str, Any]: Parsed JSON prompt structure.
+
+        Raises:
+            FileNotFoundError: If no matching .json file exists.
+            json.JSONDecodeError: If the file is not valid JSON.
+        """
         path = cls.PROMPT_DIR / f"{name}.json"
         try:
             with open(path, "r", encoding="utf-8") as f:

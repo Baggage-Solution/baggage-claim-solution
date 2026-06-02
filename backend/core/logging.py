@@ -40,23 +40,47 @@ _BOUNDARY_MESSAGE_SUFFIXES = (
 
 
 def generate_request_id() -> str:
+    """Generate a new UUID4 string as a unique request identifier.
+
+    Returns:
+        str: A UUID4 string (e.g. "550e8400-e29b-41d4-a716-446655440000").
+    """
     return str(uuid.uuid4())
 
 
 def current_request_id() -> str | None:
+    """Return the request_id bound to the current async context, or None.
+
+    Returns:
+        str | None: The active request_id, or None outside a request context.
+    """
     return _request_id_ctx_var.get(None)
 
 
 def bind_request_id(request_id: str | None) -> Token:
+    """Bind a request_id to the current async context.
+
+    Args:
+        request_id: The ID to bind. Pass None to clear.
+
+    Returns:
+        Token: ContextVar token — pass to reset_request_id to unset.
+    """
     return _request_id_ctx_var.set(request_id)
 
 
 def reset_request_id(token: Token) -> None:
+    """Reset the request_id ContextVar to its previous value.
+
+    Args:
+        token: Token returned by bind_request_id.
+    """
     _request_id_ctx_var.reset(token)
 
 
 class _JSONFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        """Serialise a LogRecord as a JSON string with PII masking applied."""
         msg = record.getMessage()
         component = None
         m = _MESSAGE_PREFIX_RE.match(msg)
@@ -93,12 +117,22 @@ class _JSONFormatter(logging.Formatter):
 
 class _PlainFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        """Serialise a LogRecord as a human-readable plain-text string."""
         req_id = current_request_id()
         prefix = f"[{req_id[:8]}] " if req_id else ""
         return f"{record.levelname:<8} {prefix}{record.name} — {record.getMessage()}"
 
 
 def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
+    """Configure the root logger with the specified level and formatter.
+
+    Sets up a single StreamHandler to stdout. Clears any existing handlers
+    to avoid duplicate log lines when called multiple times (e.g. in tests).
+
+    Args:
+        level: Log level string — "DEBUG", "INFO", "WARNING", "ERROR".
+        fmt: Formatter type — "json" (default) or "plain" (human-readable).
+    """
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
 
@@ -111,11 +145,26 @@ def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """ASGI middleware that logs each HTTP request/response with structured fields.
+
+    Not added to the main app by default (RequestContextMiddleware is used instead),
+    but available for environments that need explicit request logging.
+    """
+
     def __init__(self, app, *, logger_name: str = "baggage_claim.http"):
         super().__init__(app)
         self._logger = logging.getLogger(logger_name)
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        """Log HTTP request start and completion with method, path, and status.
+
+        Args:
+            request: Incoming Starlette request.
+            call_next: ASGI middleware chain callable.
+
+        Returns:
+            Response: Downstream response passed through unchanged.
+        """
         start = time.perf_counter()
         req_id = current_request_id() or "unknown"
 

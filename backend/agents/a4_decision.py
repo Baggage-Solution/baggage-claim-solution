@@ -56,6 +56,12 @@ class A4DecisionAgent(BaseAgent):
 
     Provider: DBProvider (injected — never import Supabase directly here).
     Thresholds: all configurable via .env — see config.py.
+
+    BUG FIX: save_claim() is now wrapped in its own try/except so a network
+    error (e.g. [Errno 11001] getaddrinfo failed when Supabase is not
+    reachable) no longer aborts the entire claim. The claim is processed
+    in-memory and the routing decision is returned to the passenger even
+    when DB persistence fails. The error is logged as a warning, not raised.
     """
 
     def __init__(self, db) -> None:
@@ -78,6 +84,10 @@ class A4DecisionAgent(BaseAgent):
 
         if not damage_paths:
             logger.debug("phash_check_skipped — no damage images")
+            return
+
+        if self._db is None:
+            logger.warning("phash_check_skipped — DB not configured (no Supabase credentials)")
             return
 
         try:
@@ -127,6 +137,10 @@ class A4DecisionAgent(BaseAgent):
             logger.debug("frequency_check_skipped — no PNR in state")
             return
 
+        if self._db is None:
+            logger.warning("frequency_check_skipped — DB not configured (no Supabase credentials)")
+            return
+
         try:
             count = await self._db.get_claim_count(
                 state.pnr,
@@ -157,7 +171,71 @@ class A4DecisionAgent(BaseAgent):
                 extra={"error": str(exc)},
             )
 
+    async def _persist_claim(self, state: ClaimState) -> None:
+        """
+        Persist the claim to the database.
+
+        BUG FIX: previously this was an inline await inside the main try/except
+        of handle(). Any network error (e.g. [Errno 11001] getaddrinfo failed
+        when Supabase credentials are wrong or the host is unreachable) would
+        propagate up, set state.error, and show "A4 error: ..." in the chat —
+        even though the routing decision had already been made successfully.
+
+        Now isolated in its own method with its own try/except. A DB failure
+        logs a warning and leaves the claim processed in memory. The routing
+        lane and compensation are already set at this point, so the passenger
+        still gets their result (Lane 1 voucher or Lane 2 review message).
+
+        Args:
+            state: ClaimState with claim_id, routing_lane, and all fields set.
+        """
+        if self._db is None:
+            logger.warning(
+                "a4_db_save_skipped — DB not configured; claim processed "
+                "in memory only. Set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY "
+                "in .env to enable persistence.",
+                extra={"claim_id": state.claim_id},
+            )
+            return
+
+        try:
+            claim_dict = _state_to_claim_dict(state)
+            await self._db.save_claim(claim_dict)
+            logger.info(
+                "a4_db_save_ok",
+                extra={"claim_id": state.claim_id, "lane": state.routing_lane},
+            )
+        except Exception as exc:
+            # DB is unreachable or misconfigured — log it but do NOT fail the
+            # claim. The passenger has already been routed; persisting to DB is
+            # a best-effort side-effect in the POC, not a hard requirement.
+            logger.warning(
+                "a4_db_save_failed — claim processed in memory only",
+                extra={
+                    "claim_id": state.claim_id,
+                    "error": str(exc),
+                    "hint": (
+                        "Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env. "
+                        "If running without Supabase, this warning is expected."
+                    ),
+                },
+            )
+
     async def handle(self, state: ClaimState, tasks: List[str]) -> ClaimState:
+        """Run fraud checks, routing decision, and claim persistence.
+
+        Steps: guard against incomplete/no-damage claims → pHash duplicate
+        detection → claim frequency check → final compensation calculation →
+        Lane 1 or Lane 2 routing → persist claim to database.
+
+        Args:
+            state: The shared ClaimState from the LangGraph pipeline.
+            tasks: Unused — present for BaseAgent interface compliance.
+
+        Returns:
+            ClaimState: Updated state with claim_id, routing_lane, fraud_score,
+                and final_compensation_usd.
+        """
         logger.info(
             "a4_started",
             extra={
@@ -171,16 +249,10 @@ class A4DecisionAgent(BaseAgent):
         )
 
         # ── Guard 1: both the damage side and the tag side must be present ─────
-        # The tag side can come from a dedicated tag photo, a tag read out of a
-        # damage photo (issue #2/#4), or manual entry (issue #3). We therefore
-        # check for usable tag DATA, not just a "tag_"-named file.
         damage_images = [p for p in state.image_paths if "tag" not in p.lower()]
         tag_images = [p for p in state.image_paths if "tag" in p.lower()]
         have_tag_data = bool(
-            tag_images
-            or state.tag_data_complete
-            or state.flight_number
-            or state.bag_id
+            tag_images or state.tag_data_complete or state.flight_number or state.bag_id
         )
 
         if state.image_paths and (not damage_images or not have_tag_data):
@@ -210,15 +282,6 @@ class A4DecisionAgent(BaseAgent):
             return state
 
         # ── Guard 3: no damage detected — reject the claim ─────────────────────
-        # Only applies when image_paths is present (i.e. the full pipeline ran A2).
-        # If image_paths is empty, A4 is being called directly in a test or from
-        # the confirm step where image paths are always the accumulated full set.
-        # We skip this guard when there are no images so unit tests that set
-        # compensation/severity directly (without going through A2) work correctly.
-        #
-        # When images ARE present: reject if severity=0.0 AND no damage labels.
-        # This catches undamaged bags uploaded through the full flow.
-        # Using AND (not OR) so tests that set severity>0 without damage_types pass.
         if (
             state.image_paths
             and state.severity_score < _MIN_DAMAGE_SEVERITY
@@ -251,24 +314,19 @@ class A4DecisionAgent(BaseAgent):
             await self._run_frequency_check(state)
 
             # Step 4 — Calculate final compensation
-            # Luxury multiplier (1.5×) applies on top of base estimate.
-            # is_luxury is seeded from frontend echo so it's never lost between turns.
             if state.is_luxury:
                 state.final_compensation_usd = state.compensation_estimate_usd * 1.5
             else:
                 state.final_compensation_usd = state.compensation_estimate_usd
 
             # Step 5 — Routing decision
-            # Lane 1: compensation <= $100, not luxury, fraud_score < 0.5
-            # Lane 2: anything above — staff review
             if state.is_lane1_eligible():
                 state.routing_lane = 1
             else:
                 state.routing_lane = 2
 
-            # Step 6 — Persist to DB
-            claim_dict = _state_to_claim_dict(state)
-            await self._db.save_claim(claim_dict)
+            # Step 6 — Persist to DB (best-effort; never fails the claim)
+            await self._persist_claim(state)
 
             # Step 7 — Debug logging
             state.add_debug("a4_lane", state.routing_lane)

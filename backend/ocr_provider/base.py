@@ -7,6 +7,12 @@ from typing import Optional
 
 @dataclass
 class TagData:
+    """Structured result returned by OCR extraction from a bag tag image.
+
+    Fields default to None when the corresponding value could not be read.
+    confidence reflects the OCR model's overall certainty for this image.
+    """
+
     flight_number: Optional[str] = None
     pnr: Optional[str] = None
     bag_id: Optional[str] = None

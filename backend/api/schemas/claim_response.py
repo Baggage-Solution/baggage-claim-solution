@@ -6,6 +6,13 @@ from pydantic import BaseModel
 
 
 class WebhookResponse(BaseModel):
+    """Outbound payload returned to the React simulator after each agent turn.
+
+    Contains the AI reply text plus all state fields the frontend must echo
+    back on the next request. This makes the webhook endpoint stateless —
+    no server-side session storage is needed for the conversation flow.
+    """
+
     session_id: str
     reply: str
     claim_id: Optional[str] = None

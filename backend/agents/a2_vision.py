@@ -49,6 +49,20 @@ class A2VisionAgent(BaseAgent):
         return round(severity_score * _SEVERITY_TO_USD_SCALE, 2)
 
     async def handle(self, state: ClaimState, tasks: List[str]) -> ClaimState:
+        """Run vision analysis on all new damage photos in state.image_paths.
+
+        Calls VisionProvider.analyze_image() for each unprocessed damage photo,
+        runs the object gate (issue #1), detects embedded tags (issues #2/#4),
+        and writes damage_types, severity_score, brand_detected, and is_luxury
+        to state.
+
+        Args:
+            state: The shared ClaimState from the LangGraph pipeline.
+            tasks: Unused — present for BaseAgent interface compliance.
+
+        Returns:
+            ClaimState: Updated state with vision analysis results.
+        """
         logger.info(
             "a2_started",
             extra={"component": "A2", "image_count": len(state.image_paths)},
@@ -155,9 +169,7 @@ class A2VisionAgent(BaseAgent):
                 existing = set(state.tag_candidate_paths)
                 done = set(state.processed_tag_paths)
                 state.tag_candidate_paths = [
-                    p
-                    for p in (list(existing) + tag_candidates)
-                    if p not in done
+                    p for p in (list(existing) + tag_candidates) if p not in done
                 ]
                 logger.info(
                     "a2_tag_in_damage_photo",
@@ -196,11 +208,16 @@ class A2VisionAgent(BaseAgent):
                 return state
 
             # ── No structural damage on a clear bag photo ─────────────────────
-            no_real_damage = (not deduped_types) and (max_severity <= _NO_DAMAGE_SEVERITY)
+            no_real_damage = (not deduped_types) and (
+                max_severity <= _NO_DAMAGE_SEVERITY
+            )
             if no_real_damage:
                 logger.info(
                     "a2_no_damage_detected",
-                    extra={"max_severity": max_severity, "max_confidence": max_damage_conf},
+                    extra={
+                        "max_severity": max_severity,
+                        "max_confidence": max_damage_conf,
+                    },
                 )
                 state.damage_types = []
                 state.severity_score = round(max_severity, 4)

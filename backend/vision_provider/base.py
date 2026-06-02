@@ -7,6 +7,12 @@ from typing import List, Optional
 
 @dataclass
 class DamageResult:
+    """Structured damage analysis result (legacy — superseded by SceneResult).
+
+    Kept for backward compatibility with any code that uses DamageResult
+    directly. New code should consume SceneResult.to_damage_result().
+    """
+
     damage_types: List[str] = field(default_factory=list)
     severity_score: float = 0.0  # 0.0 (cosmetic) to 1.0 (destroyed)
     confidence: float = 0.0
@@ -15,6 +21,12 @@ class DamageResult:
 
 @dataclass
 class BrandResult:
+    """Structured brand classification result (legacy — superseded by SceneResult).
+
+    Kept for backward compatibility. New code should consume
+    SceneResult.to_brand_result().
+    """
+
     brand: Optional[str] = None
     is_luxury: bool = False
     confidence: float = 0.0
@@ -63,6 +75,11 @@ class SceneResult:
     raw_description: str = ""
 
     def to_damage_result(self) -> DamageResult:
+        """Project SceneResult fields into a DamageResult for backward compatibility.
+
+        Returns:
+            DamageResult: Populated from this scene's damage fields.
+        """
         return DamageResult(
             damage_types=list(self.damage_types),
             severity_score=self.severity_score,
@@ -71,6 +88,11 @@ class SceneResult:
         )
 
     def to_brand_result(self) -> BrandResult:
+        """Project SceneResult fields into a BrandResult for backward compatibility.
+
+        Returns:
+            BrandResult: Populated from this scene's brand fields.
+        """
         return BrandResult(
             brand=self.brand,
             is_luxury=self.is_luxury,
