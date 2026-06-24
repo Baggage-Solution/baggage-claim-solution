@@ -264,7 +264,9 @@ class GeminiVisionProvider(VisionProvider):
         parsed = self._parse_json_response(response.text, "analyze_image")
 
         brand_raw = parsed.get("brand")
-        brand_name = brand_raw if brand_raw and str(brand_raw).lower() != "null" else None
+        brand_name = (
+            brand_raw if brand_raw and str(brand_raw).lower() != "null" else None
+        )
         is_bag = bool(parsed.get("is_bag", False))
 
         # If the model says it is NOT a bag, force damage/brand to neutral so a
@@ -280,9 +282,11 @@ class GeminiVisionProvider(VisionProvider):
             severity_score=severity,
             damage_confidence=float(parsed.get("damage_confidence", 0.0)),
             brand=brand_name if is_bag else None,
-            is_luxury=self._resolve_luxury(brand_name, parsed.get("is_luxury", False))
-            if is_bag
-            else False,
+            is_luxury=(
+                self._resolve_luxury(brand_name, parsed.get("is_luxury", False))
+                if is_bag
+                else False
+            ),
             brand_confidence=float(parsed.get("brand_confidence", 0.0)),
             tag_visible=bool(parsed.get("tag_visible", False)),
             tag_confidence=float(parsed.get("tag_confidence", 0.0)),
@@ -344,7 +348,9 @@ class GeminiVisionProvider(VisionProvider):
         )
         parsed = self._parse_json_response(response.text, "classify_brand")
         brand_raw = parsed.get("brand")
-        brand_name = brand_raw if brand_raw and str(brand_raw).lower() != "null" else None
+        brand_name = (
+            brand_raw if brand_raw and str(brand_raw).lower() != "null" else None
+        )
         result = BrandResult(
             brand=brand_name,
             is_luxury=self._resolve_luxury(brand_name, parsed.get("is_luxury", False)),

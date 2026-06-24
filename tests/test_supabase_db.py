@@ -33,6 +33,7 @@ def make_provider() -> tuple[SupabaseDBProvider, MagicMock]:
     async Supabase client used in production (acreate_client → AsyncClient).
     """
     from unittest.mock import AsyncMock
+
     mock_client = MagicMock()
     provider = SupabaseDBProvider.__new__(SupabaseDBProvider)
     provider._client = mock_client
@@ -54,7 +55,10 @@ def make_chain(mock_client: MagicMock, return_data=None, count: int = 0):
 
     chain = MagicMock()
     from unittest.mock import AsyncMock
-    chain.execute = AsyncMock(return_value=MagicMock(data=return_data or [], count=count))
+
+    chain.execute = AsyncMock(
+        return_value=MagicMock(data=return_data or [], count=count)
+    )
     chain.select.return_value = chain
     chain.insert.return_value = chain
     chain.update.return_value = chain

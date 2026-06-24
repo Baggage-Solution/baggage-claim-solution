@@ -69,16 +69,29 @@ def _vision(severity=0.3, confidence=0.9, is_luxury=False):
     from backend.vision_provider.base import BrandResult, DamageResult
 
     v = MagicMock()
-    dr = DamageResult(damage_types=["cracked shell"], severity_score=severity, confidence=confidence)
+    dr = DamageResult(
+        damage_types=["cracked shell"], severity_score=severity, confidence=confidence
+    )
     br = BrandResult(brand="Samsonite", is_luxury=is_luxury, confidence=0.9)
     v.analyze_damage = AsyncMock(return_value=dr)
     v.classify_brand = AsyncMock(return_value=br)
     from backend.vision_provider.base import SceneResult
-    v.analyze_image = AsyncMock(return_value=SceneResult(
-        is_bag=True, bag_confidence=0.97, object_description="suitcase",
-        damage_types=list(dr.damage_types), severity_score=dr.severity_score,
-        damage_confidence=dr.confidence, brand=br.brand, is_luxury=br.is_luxury,
-        brand_confidence=br.confidence, tag_visible=False, tag_confidence=0.0))
+
+    v.analyze_image = AsyncMock(
+        return_value=SceneResult(
+            is_bag=True,
+            bag_confidence=0.97,
+            object_description="suitcase",
+            damage_types=list(dr.damage_types),
+            severity_score=dr.severity_score,
+            damage_confidence=dr.confidence,
+            brand=br.brand,
+            is_luxury=br.is_luxury,
+            brand_confidence=br.confidence,
+            tag_visible=False,
+            tag_confidence=0.0,
+        )
+    )
     return v
 
 
@@ -981,8 +994,9 @@ def test_t014_supabase_raises_on_missing_url():
 @pytest.mark.asyncio
 async def test_t014_save_claim_calls_insert():
     """T-014: save_claim() calls table('claims').insert() exactly once."""
-    from backend.db.supabase_client import SupabaseDBProvider
     from unittest.mock import AsyncMock
+
+    from backend.db.supabase_client import SupabaseDBProvider
 
     mock_client = MagicMock()
     chain = MagicMock()
@@ -999,12 +1013,12 @@ async def test_t014_save_claim_calls_insert():
     chain.insert.assert_called_once()
 
 
-
 @pytest.mark.asyncio
 async def test_t014_update_claim_status_calls_update():
     """T-014: update_claim_status() sets status column correctly."""
-    from backend.db.supabase_client import SupabaseDBProvider
     from unittest.mock import AsyncMock
+
+    from backend.db.supabase_client import SupabaseDBProvider
 
     mock_client = MagicMock()
     chain = MagicMock()
@@ -1021,12 +1035,12 @@ async def test_t014_update_claim_status_calls_update():
     chain.update.assert_called_once_with({"status": "APPROVED"})
 
 
-
 @pytest.mark.asyncio
 async def test_t014_get_claim_count_returns_int():
     """T-014: get_claim_count() returns integer count from Supabase."""
-    from backend.db.supabase_client import SupabaseDBProvider
     from unittest.mock import AsyncMock
+
+    from backend.db.supabase_client import SupabaseDBProvider
 
     mock_client = MagicMock()
     chain = MagicMock()
@@ -1042,7 +1056,6 @@ async def test_t014_get_claim_count_returns_int():
 
     result = await provider.get_claim_count("ABC123", days=30)
     assert result == 2
-
 
 
 @pytest.mark.asyncio
