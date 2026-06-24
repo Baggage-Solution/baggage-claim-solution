@@ -8,7 +8,8 @@ import logging
 import os
 from typing import List, Optional
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import (APIRouter, File, Form, Header, HTTPException, Request,
+                     UploadFile)
 from fastapi.responses import StreamingResponse
 
 from backend.api.schemas.claim_request import WebhookRequest

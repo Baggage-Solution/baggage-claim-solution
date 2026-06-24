@@ -46,25 +46,39 @@ def _db(claim_count: int = 0):
     db.get_claim_count = AsyncMock(return_value=claim_count)
     db.get_recent_hashes = AsyncMock(return_value=[])
     db.update_claim_status = AsyncMock(return_value=None)
-    db.update_claim = AsyncMock(return_value={"status": "RESOLVED", "compensation": 60.0, "voucher_code": "VCH-TEST0001"})
-    db.get_claim = AsyncMock(return_value={"status": "AWAITING_REVIEW", "compensation": 60.0, "voucher_code": None})
-    db.get_claims_by_status = AsyncMock(return_value=[
-        {
-            "claim_id": "CLM-20260601-0001",
-            "status": "AWAITING_REVIEW",
-            "routing_lane": 2,
-            "compensation": 250.0,
-            "damage_types": ["torn strap", "broken wheel"],
-            "severity_score": 0.7,
-            "brand_detected": "Rimowa",
-            "is_luxury": True,
-            "fraud_score": 0.0,
-            "pnr": "XY9988",
-            "flight_number": "AI101",
-            "bag_id": "0572351234",
-            "session_id": "sim-test-001",
+    db.update_claim = AsyncMock(
+        return_value={
+            "status": "RESOLVED",
+            "compensation": 60.0,
+            "voucher_code": "VCH-TEST0001",
         }
-    ])
+    )
+    db.get_claim = AsyncMock(
+        return_value={
+            "status": "AWAITING_REVIEW",
+            "compensation": 60.0,
+            "voucher_code": None,
+        }
+    )
+    db.get_claims_by_status = AsyncMock(
+        return_value=[
+            {
+                "claim_id": "CLM-20260601-0001",
+                "status": "AWAITING_REVIEW",
+                "routing_lane": 2,
+                "compensation": 250.0,
+                "damage_types": ["torn strap", "broken wheel"],
+                "severity_score": 0.7,
+                "brand_detected": "Rimowa",
+                "is_luxury": True,
+                "fraud_score": 0.0,
+                "pnr": "XY9988",
+                "flight_number": "AI101",
+                "bag_id": "0572351234",
+                "session_id": "sim-test-001",
+            }
+        ]
+    )
     return db
 
 
@@ -75,7 +89,8 @@ def _llm(reply: str = "Hello! Please describe the damage to your bag."):
 
 
 def _vision(severity: float = 0.3, is_luxury: bool = False):
-    from backend.vision_provider.base import BrandResult, DamageResult, SceneResult
+    from backend.vision_provider.base import (BrandResult, DamageResult,
+                                              SceneResult)
 
     v = MagicMock()
     v.analyze_damage = AsyncMock(
@@ -322,8 +337,8 @@ class TestT019Cleanup:
                 if pattern in text:
                     violations.append(f"{py_file.name}: '{pattern}'")
 
-        assert not violations, (
-            "Provider names leaked into agents/:\n" + "\n".join(violations)
+        assert not violations, "Provider names leaked into agents/:\n" + "\n".join(
+            violations
         )
 
     def test_t019_all_providers_have_base_abc(self):
@@ -340,9 +355,9 @@ class TestT019Cleanup:
             base = d / "base.py"
             assert base.exists(), f"Missing base.py in {d}"
             content = base.read_text(encoding="utf-8")
-            assert "ABC" in content or "abstractmethod" in content, (
-                f"{base} does not define an ABC"
-            )
+            assert (
+                "ABC" in content or "abstractmethod" in content
+            ), f"{base} does not define an ABC"
 
     def test_t019_env_example_has_key_variables(self):
         """.env.example documents all critical environment variables."""
@@ -400,12 +415,15 @@ class TestT019Cleanup:
         for py_file in backend_dir.rglob("*.py"):
             if py_file.name in allowed_exceptions:
                 continue
-            line_count = len(py_file.read_text(encoding="utf-8", errors="replace").splitlines())
+            line_count = len(
+                py_file.read_text(encoding="utf-8", errors="replace").splitlines()
+            )
             if line_count > 300:
                 oversized.append(f"{py_file}: {line_count} lines")
         # Report as warning-style info, do not fail
         if oversized:
             import warnings
+
             warnings.warn(
                 "Files exceeding 300-line guideline (refactor in Phase 2):\n"
                 + "\n".join(oversized)
@@ -434,8 +452,8 @@ class TestT019Cleanup:
                             and isinstance(node.body[0].value, ast.Constant)
                         ):
                             missing_docs.append(f"{py_file.name}:{node.name}()")
-        assert not missing_docs, (
-            "Public functions without docstrings:\n" + "\n".join(missing_docs)
+        assert not missing_docs, "Public functions without docstrings:\n" + "\n".join(
+            missing_docs
         )
 
 
@@ -478,6 +496,7 @@ class TestT020TestSuite:
         if not fpath.exists():
             pytest.skip("tests/test_a4_routing.py not found")
         import ast
+
         ast.parse(fpath.read_text(encoding="utf-8"))  # raises SyntaxError if broken
 
     def test_t020_pytest_ini_has_asyncio_mode(self):
@@ -580,8 +599,14 @@ class TestT022FinalIntegration:
         from backend.main import app
 
         with (
-            patch("backend.dependencies.provide_llm", return_value=_llm("Your claim is approved!")),
-            patch("backend.dependencies.provide_vision", return_value=_vision(severity=0.3)),
+            patch(
+                "backend.dependencies.provide_llm",
+                return_value=_llm("Your claim is approved!"),
+            ),
+            patch(
+                "backend.dependencies.provide_vision",
+                return_value=_vision(severity=0.3),
+            ),
             patch("backend.dependencies.provide_ocr", return_value=_ocr()),
             patch("backend.dependencies.provide_db", return_value=_db()),
             patch("backend.dependencies.provide_storage"),
@@ -721,10 +746,9 @@ class TestT022FinalIntegration:
     @pytest.mark.asyncio
     async def test_t022_second_machine_env_check_structure(self):
         """Config can load with only GEMINI_API_KEY set (no Supabase required)."""
-        from backend.config import Settings
-
         # Clear cache so our custom env is picked up
-        from backend.config import get_settings
+        from backend.config import Settings, get_settings
+
         get_settings.cache_clear()
 
         # Settings must not raise even when Supabase is absent
@@ -774,12 +798,13 @@ class TestT022FinalIntegration:
     def test_t022_claim_id_format(self):
         """Claim IDs follow the CLM-YYYYMMDD-XXXX format from architecture doc."""
         import re
+
         from backend.agents.a4_decision import _generate_claim_id
 
         claim_id = _generate_claim_id()
-        assert re.match(r"CLM-\d{8}-[A-Z0-9]{4}", claim_id), (
-            f"Invalid claim_id format: {claim_id}"
-        )
+        assert re.match(
+            r"CLM-\d{8}-[A-Z0-9]{4}", claim_id
+        ), f"Invalid claim_id format: {claim_id}"
 
     def test_t022_three_sessions_are_independent(self):
         """Three concurrent sessions do not bleed state into each other."""
@@ -788,8 +813,12 @@ class TestT022FinalIntegration:
         # Verify three different session IDs produce independent states
         # (ClaimState is a dataclass — each instance has its own fields)
         s1 = ClaimState(session_id="sess-1", passenger_message="hi", severity_score=0.1)
-        s2 = ClaimState(session_id="sess-2", passenger_message="hello", severity_score=0.5)
-        s3 = ClaimState(session_id="sess-3", passenger_message="damaged bag", severity_score=0.9)
+        s2 = ClaimState(
+            session_id="sess-2", passenger_message="hello", severity_score=0.5
+        )
+        s3 = ClaimState(
+            session_id="sess-3", passenger_message="damaged bag", severity_score=0.9
+        )
 
         assert s1.session_id != s2.session_id
         assert s2.session_id != s3.session_id
@@ -812,4 +841,6 @@ class TestT022FinalIntegration:
             Path("BRANCH_DOCS/WEEK3_DOCS"),
         ]
         missing = [str(p) for p in required_paths if not p.exists()]
-        assert not missing, f"Files/dirs missing for v1.0-poc tag:\n" + "\n".join(missing)
+        assert not missing, f"Files/dirs missing for v1.0-poc tag:\n" + "\n".join(
+            missing
+        )

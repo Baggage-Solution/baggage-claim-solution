@@ -82,7 +82,7 @@ async def agent_decision(payload: DecisionRequest) -> DecisionResponse:
             claim_id=payload.claim_id,
             status="error",
             message="Database not configured — set SUPABASE_URL and "
-                    "SUPABASE_SERVICE_ROLE_KEY in .env to enable claim persistence.",
+            "SUPABASE_SERVICE_ROLE_KEY in .env to enable claim persistence.",
         )
 
     # Look up the existing claim so we can fall back to its current compensation
@@ -134,7 +134,11 @@ async def agent_decision(payload: DecisionRequest) -> DecisionResponse:
     except Exception as exc:
         logger.warning(
             "agent_decision_db_update_failed",
-            extra={"claim_id": payload.claim_id, "action": payload.action, "error": str(exc)},
+            extra={
+                "claim_id": payload.claim_id,
+                "action": payload.action,
+                "error": str(exc),
+            },
         )
         return DecisionResponse(
             claim_id=payload.claim_id,
@@ -196,7 +200,7 @@ async def get_pending_claims():
             "claims": [],
             "count": 0,
             "warning": "Database not configured — set SUPABASE_URL and "
-                       "SUPABASE_SERVICE_ROLE_KEY in .env to enable claim persistence.",
+            "SUPABASE_SERVICE_ROLE_KEY in .env to enable claim persistence.",
         }
 
     try:

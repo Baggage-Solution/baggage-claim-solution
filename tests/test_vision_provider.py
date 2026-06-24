@@ -22,6 +22,7 @@ FIXTURE_DIR = Path("tests/fixtures/damaged")
 def make_provider() -> GeminiVisionProvider:
     """Create a GeminiVisionProvider with a mocked Gemini model."""
     from unittest.mock import AsyncMock
+
     with patch("google.generativeai.configure"), patch(
         "google.generativeai.GenerativeModel"
     ) as mock_model_cls:

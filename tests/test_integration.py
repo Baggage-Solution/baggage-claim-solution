@@ -30,7 +30,6 @@ from backend.main import app
 from backend.ocr_provider.base import TagData
 from backend.vision_provider.base import BrandResult, DamageResult
 
-
 # ── Mock factory helpers ──────────────────────────────────────────────────────
 
 
@@ -99,20 +98,22 @@ def _mock_all_providers(
     mock_vision.classify_brand = AsyncMock(
         return_value=brand_result or _make_brand_result()
     )
-    mock_vision.analyze_image = AsyncMock(return_value=MagicMock(
-        is_bag=True,
-        bag_confidence=0.95,
-        damage_types=["cracked shell"],
-        severity_score=0.3,
-        damage_confidence=0.9,
-        brand="Samsonite",
-        is_luxury=False,
-        brand_confidence=0.85,
-        tag_visible=False,
-        tag_confidence=0.0,
-        raw_description="Standard Samsonite with cracked shell.",
-        object_description="",
-    ))
+    mock_vision.analyze_image = AsyncMock(
+        return_value=MagicMock(
+            is_bag=True,
+            bag_confidence=0.95,
+            damage_types=["cracked shell"],
+            severity_score=0.3,
+            damage_confidence=0.9,
+            brand="Samsonite",
+            is_luxury=False,
+            brand_confidence=0.85,
+            tag_visible=False,
+            tag_confidence=0.0,
+            raw_description="Standard Samsonite with cracked shell.",
+            object_description="",
+        )
+    )
 
     mock_ocr = MagicMock()
     mock_ocr.extract_bag_tag = AsyncMock(return_value=tag_data or _make_tag_data())
@@ -228,9 +229,9 @@ async def test_lane1_a5_issues_voucher():
     result = await a5.handle(state, [])
 
     assert result.voucher_code is not None, "Lane 1 must produce a voucher code"
-    assert result.voucher_code.startswith("VCH-"), (
-        f"Expected VCH- prefix, got: {result.voucher_code}"
-    )
+    assert result.voucher_code.startswith(
+        "VCH-"
+    ), f"Expected VCH- prefix, got: {result.voucher_code}"
     assert result.notification_sent is True
     assert result.hitl_queued is False, "Lane 1 must not set hitl_queued"
 
@@ -513,9 +514,7 @@ async def test_retry_blurry_tag_blocks_a4():
     a4 = A4DecisionAgent(db=db)
     result = await a4.handle(state, [])
 
-    assert result.routing_lane is None, (
-        "A4 must not route when re_request_tag=True"
-    )
+    assert result.routing_lane is None, "A4 must not route when re_request_tag=True"
     db.save_claim.assert_not_called()
 
 
@@ -544,9 +543,7 @@ async def test_retry_blurry_damage_blocks_a4():
     a4 = A4DecisionAgent(db=db)
     result = await a4.handle(state, [])
 
-    assert result.routing_lane is None, (
-        "A4 must not route when re_request_damage=True"
-    )
+    assert result.routing_lane is None, "A4 must not route when re_request_damage=True"
     db.save_claim.assert_not_called()
 
 
@@ -585,11 +582,13 @@ async def test_db_failure_does_not_prevent_routing():
     result = await a4.handle(state, [])
 
     # DB failed but routing must still complete
-    assert result.routing_lane is not None, "Routing lane must be set even when DB fails"
+    assert (
+        result.routing_lane is not None
+    ), "Routing lane must be set even when DB fails"
     assert result.claim_id is not None, "Claim ID must be generated even when DB fails"
-    assert result.error is None, (
-        "DB failure must not set state.error (best-effort persistence)"
-    )
+    assert (
+        result.error is None
+    ), "DB failure must not set state.error (best-effort persistence)"
 
 
 @pytest.mark.asyncio
@@ -610,7 +609,9 @@ async def test_webhook_never_500_on_llm_failure():
         patches[3],
         patches[4],
     )
-    with broken_patches[0], broken_patches[1], broken_patches[2], broken_patches[3], broken_patches[4]:
+    with broken_patches[0], broken_patches[1], broken_patches[2], broken_patches[
+        3
+    ], broken_patches[4]:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -662,11 +663,17 @@ async def test_two_sessions_are_independent():
         ) as client:
             r_alice = await client.post(
                 "/webhook",
-                json={"session_id": "passenger-alice-t020", "message": "my bag is cracked"},
+                json={
+                    "session_id": "passenger-alice-t020",
+                    "message": "my bag is cracked",
+                },
             )
             r_bob = await client.post(
                 "/webhook",
-                json={"session_id": "passenger-bob-t020", "message": "my suitcase broke"},
+                json={
+                    "session_id": "passenger-bob-t020",
+                    "message": "my suitcase broke",
+                },
             )
 
     assert r_alice.status_code == 200

@@ -148,7 +148,11 @@ class SupabaseDBProvider(DBProvider):
                 self._client = None  # ensure next call retries cleanly
                 logger.warning(
                     "supabase_connect_attempt_failed",
-                    extra={"attempt": attempt, "max": _MAX_CONNECT_ATTEMPTS, "error": str(exc)},
+                    extra={
+                        "attempt": attempt,
+                        "max": _MAX_CONNECT_ATTEMPTS,
+                        "error": str(exc),
+                    },
                 )
                 if attempt < _MAX_CONNECT_ATTEMPTS:
                     await asyncio.sleep(_RETRY_DELAY_SECONDS)
@@ -280,9 +284,7 @@ class SupabaseDBProvider(DBProvider):
         logger.debug("supabase_get_claim", extra={"claim_id": claim_id})
 
         client = await self._get_client()
-        response = (
-            await client.table("claims").select("*").eq("id", claim_id).execute()
-        )
+        response = await client.table("claims").select("*").eq("id", claim_id).execute()
 
         if not response.data:
             logger.debug("supabase_get_claim_not_found", extra={"claim_id": claim_id})

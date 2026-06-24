@@ -18,7 +18,6 @@ import pytest
 from backend.agents.a4_decision import A4DecisionAgent
 from backend.graph.state import ClaimState
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -84,7 +83,9 @@ async def test_routing_scenario1_lane1_auto_approve():
 async def test_routing_scenario1_at_threshold_still_lane1():
     """$100 compensation (exactly at threshold) must still be Lane 1."""
     agent = A4DecisionAgent(db=make_db())
-    state = make_state(compensation_estimate_usd=100.0, is_luxury=False, fraud_score=0.0)
+    state = make_state(
+        compensation_estimate_usd=100.0, is_luxury=False, fraud_score=0.0
+    )
 
     result = await agent.handle(state, [])
 
@@ -118,7 +119,9 @@ async def test_routing_scenario2_high_value_lane2():
 async def test_routing_scenario2_just_above_threshold_is_lane2():
     """$100.01 compensation is above threshold → Lane 2."""
     agent = A4DecisionAgent(db=make_db())
-    state = make_state(compensation_estimate_usd=100.01, is_luxury=False, fraud_score=0.0)
+    state = make_state(
+        compensation_estimate_usd=100.01, is_luxury=False, fraud_score=0.0
+    )
 
     result = await agent.handle(state, [])
 

@@ -6,7 +6,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from backend.core.logging import bind_request_id, generate_request_id, reset_request_id
+from backend.core.logging import (bind_request_id, generate_request_id,
+                                  reset_request_id)
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):

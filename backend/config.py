@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     ocr_provider: str = Field(default="gemini", alias="OCR_PROVIDER")
     storage_provider: str = Field(default="local", alias="STORAGE_PROVIDER")
     db_provider: str = Field(default="supabase", alias="DB_PROVIDER")
+    queue_provider: str = Field(default="memory", alias="QUEUE_PROVIDER")
+    secrets_provider: str = Field(default="env", alias="SECRETS_PROVIDER")
+    channel_provider: str = Field(default="webhook", alias="CHANNEL_PROVIDER")
 
     # =========================================================
     # GEMINI  (POC — free tier)

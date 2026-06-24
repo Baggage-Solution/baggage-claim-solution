@@ -87,7 +87,9 @@ class A4DecisionAgent(BaseAgent):
             return
 
         if self._db is None:
-            logger.warning("phash_check_skipped — DB not configured (no Supabase credentials)")
+            logger.warning(
+                "phash_check_skipped — DB not configured (no Supabase credentials)"
+            )
             return
 
         try:
@@ -138,7 +140,9 @@ class A4DecisionAgent(BaseAgent):
             return
 
         if self._db is None:
-            logger.warning("frequency_check_skipped — DB not configured (no Supabase credentials)")
+            logger.warning(
+                "frequency_check_skipped — DB not configured (no Supabase credentials)"
+            )
             return
 
         try:
