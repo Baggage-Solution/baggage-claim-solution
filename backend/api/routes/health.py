@@ -6,6 +6,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Response
 
 from backend.config import get_settings
+from backend.dependencies import provide_db
 
 router = APIRouter(tags=["Health"])
 logger = logging.getLogger(__name__)
@@ -16,8 +17,16 @@ async def health_check(response: Response) -> Dict[str, Any]:
     """Return the application health status and active provider configuration.
 
     Returns HTTP 200 with status="ok" when all critical integrations are
-    configured (GEMINI_API_KEY + SUPABASE_URL/KEY). Returns HTTP 503 with
-    status="degraded" if any are missing — useful for liveness probes.
+    configured (LLM provider API key + a working DB provider). Returns
+    HTTP 503 with status="degraded" if any are missing — useful for
+    liveness probes.
+
+    DB readiness is checked via provide_db() rather than reading
+    provider-specific settings (e.g. supabase_url) directly — this keeps
+    the check cloud/db-agnostic. provide_db() already returns None for
+    any DB_PROVIDER backend that isn't fully configured, so this works
+    unchanged whether DB_PROVIDER is supabase, postgres, or any future
+    backend.
 
     Args:
         response: FastAPI Response object used to set HTTP status code.
@@ -27,12 +36,10 @@ async def health_check(response: Response) -> Dict[str, Any]:
     """
     settings = get_settings()
 
-    gemini_configured = bool(settings.gemini_api_key)
-    supabase_configured = bool(
-        settings.supabase_url and settings.supabase_service_role_key
-    )
+    llm_configured = bool(settings.gemini_api_key)
+    db_configured = provide_db() is not None
 
-    status = "ok" if (gemini_configured and supabase_configured) else "degraded"
+    status = "ok" if (llm_configured and db_configured) else "degraded"
     if status == "degraded":
         response.status_code = 503
 
@@ -48,7 +55,7 @@ async def health_check(response: Response) -> Dict[str, Any]:
             "storage": settings.storage_provider,
         },
         "configured": {
-            "gemini": gemini_configured,
-            "supabase": supabase_configured,
+            "llm": llm_configured,
+            "db": db_configured,
         },
     }

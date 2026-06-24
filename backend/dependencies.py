@@ -134,6 +134,16 @@ def provide_storage():
         from backend.storage_provider.local_storage import LocalStorageProvider
 
         return LocalStorageProvider(base_path=s.local_storage_base_path)
+    if s.storage_provider == "s3":
+        from backend.storage_provider.s3_storage import S3StorageProvider
+
+        if not s.s3_bucket:
+            raise ValueError("S3_BUCKET must be set when STORAGE_PROVIDER=s3")
+        return S3StorageProvider(
+            bucket=s.s3_bucket,
+            region=s.aws_region,
+            presign_expiry_seconds=s.s3_presign_expiry_seconds,
+        )
     raise ValueError(f"Unknown STORAGE_PROVIDER: {s.storage_provider}")
 
 
@@ -144,8 +154,7 @@ def provide_storage():
 def provide_queue():
     s = get_settings()
     if s.queue_provider == "memory":
-        from backend.queue_provider.in_memory_queue import \
-            InMemoryQueueProvider
+        from backend.queue_provider.in_memory_queue import InMemoryQueueProvider
 
         return InMemoryQueueProvider()
     raise ValueError(f"Unknown QUEUE_PROVIDER: {s.queue_provider}")
@@ -171,8 +180,7 @@ def provide_secrets():
 def provide_channel():
     s = get_settings()
     if s.channel_provider == "webhook":
-        from backend.channel_provider.webhook_channel import \
-            WebhookChannelProvider
+        from backend.channel_provider.webhook_channel import WebhookChannelProvider
 
         return WebhookChannelProvider()
     raise ValueError(f"Unknown CHANNEL_PROVIDER: {s.channel_provider}")

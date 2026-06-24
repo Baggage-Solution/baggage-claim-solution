@@ -41,3 +41,9 @@ isort==5.13.2
 python-multipart==0.0.20
 
 reportlab>=4.0
+
+# AWS SDK (P-004: S3 storage / future Bedrock + Secrets Manager + SQS)
+boto3==1.35.36
+
+# AWS mocking for tests — moto (P-004: S3 storage tests)
+moto[s3]==5.0.18

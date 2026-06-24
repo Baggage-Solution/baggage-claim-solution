@@ -58,10 +58,19 @@ class Settings(BaseSettings):
     )
 
     # =========================================================
-    # STORAGE
+    # STORAGE  (POC: local disk)
     # =========================================================
     local_storage_base_path: str = Field(
         default="./data/uploads", alias="LOCAL_STORAGE_BASE_PATH"
+    )
+
+    # =========================================================
+    # AWS — S3 STORAGE  (Production — P-004)
+    # =========================================================
+    s3_bucket: str | None = Field(default=None, alias="S3_BUCKET")
+    aws_region: str = Field(default="us-east-1", alias="AWS_REGION")
+    s3_presign_expiry_seconds: int = Field(
+        default=3600, alias="S3_PRESIGN_EXPIRY_SECONDS"
     )
 
     # =========================================================
