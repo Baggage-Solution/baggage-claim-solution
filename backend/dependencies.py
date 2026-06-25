@@ -189,6 +189,12 @@ def provide_secrets():
         from backend.secrets_provider.env_secrets import EnvSecretsProvider
 
         return EnvSecretsProvider()
+    if s.secrets_provider == "aws_sm":
+        from backend.secrets_provider.aws_secrets import AWSSecretsManagerProvider
+
+        return AWSSecretsManagerProvider(
+            secret_name=s.secrets_manager_name, region=s.aws_region
+        )
     raise ValueError(f"Unknown SECRETS_PROVIDER: {s.secrets_provider}")
 
 
