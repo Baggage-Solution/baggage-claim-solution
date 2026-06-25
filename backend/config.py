@@ -74,6 +74,23 @@ class Settings(BaseSettings):
     )
 
     # =========================================================
+    # AWS — BEDROCK LLM/VISION/OCR  (Production — P-003)
+    # =========================================================
+    # Reuses aws_region above rather than declaring a separate
+    # bedrock_region — one AWS region setting shared across all AWS
+    # providers (S3, Bedrock, and future SQS/Secrets Manager).
+    bedrock_llm_model: str = Field(
+        default="anthropic.claude-sonnet-4-20250514-v1:0", alias="BEDROCK_LLM_MODEL"
+    )
+    bedrock_vision_model: str = Field(
+        default="anthropic.claude-sonnet-4-20250514-v1:0",
+        alias="BEDROCK_VISION_MODEL",
+    )
+    bedrock_ocr_model: str = Field(
+        default="anthropic.claude-sonnet-4-20250514-v1:0", alias="BEDROCK_OCR_MODEL"
+    )
+
+    # =========================================================
     # CLAIM ROUTING THRESHOLDS
     # =========================================================
     lane1_max_compensation_usd: float = Field(
