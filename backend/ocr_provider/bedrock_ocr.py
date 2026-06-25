@@ -80,7 +80,7 @@ class BedrockOCRProvider(OCRProvider):
 
         Args:
             model_id: Bedrock model ID for Claude (e.g.
-                "anthropic.claude-sonnet-4-20250514-v1:0"). Read from
+                "anthropic.claude-haiku-4-5-20251001-v1:0"). Read from
                 Settings.bedrock_ocr_model — never hardcoded.
             region: AWS region the Bedrock endpoint lives in (e.g. us-east-1).
         """
