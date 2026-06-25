@@ -74,6 +74,29 @@ class Settings(BaseSettings):
     )
 
     # =========================================================
+    # AWS — BEDROCK LLM/VISION/OCR  (Production — P-003)
+    # =========================================================
+    # Reuses aws_region above rather than declaring a separate
+    # bedrock_region — one AWS region setting shared across all AWS
+    # providers (S3, Bedrock, and future SQS/Secrets Manager).
+    #
+    # Default model: Claude Haiku 4.5 (anthropic.claude-haiku-4-5-20251001-v1:0)
+    # — chosen over Sonnet 4 for cost; Haiku 4.5 supports vision, so the same
+    # model ID is used for LLM, vision, and OCR. To use cross-region inference
+    # (higher throughput within a geography), prefix with a region code, e.g.
+    # "us.anthropic.claude-haiku-4-5-20251001-v1:0".
+    bedrock_llm_model: str = Field(
+        default="anthropic.claude-haiku-4-5-20251001-v1:0", alias="BEDROCK_LLM_MODEL"
+    )
+    bedrock_vision_model: str = Field(
+        default="anthropic.claude-haiku-4-5-20251001-v1:0",
+        alias="BEDROCK_VISION_MODEL",
+    )
+    bedrock_ocr_model: str = Field(
+        default="anthropic.claude-haiku-4-5-20251001-v1:0", alias="BEDROCK_OCR_MODEL"
+    )
+
+    # =========================================================
     # CLAIM ROUTING THRESHOLDS
     # =========================================================
     lane1_max_compensation_usd: float = Field(

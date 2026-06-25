@@ -18,6 +18,15 @@ def provide_llm():
         from backend.llm_provider.gemini_llm import GeminiLLMProvider
 
         return GeminiLLMProvider(api_key=s.gemini_api_key, model=s.gemini_model)
+    if s.llm_provider == "bedrock":
+        from backend.llm_provider.bedrock_llm import BedrockLLMProvider
+
+        return BedrockLLMProvider(
+            model_id=s.bedrock_llm_model,
+            region=s.aws_region,
+            temperature=s.llm_default_temperature,
+            max_output_tokens=s.llm_max_output_tokens,
+        )
     raise ValueError(f"Unknown LLM_PROVIDER: {s.llm_provider}")
 
 
@@ -33,6 +42,12 @@ def provide_vision():
         return GeminiVisionProvider(
             api_key=s.gemini_api_key, model=s.gemini_vision_model
         )
+    if s.vision_provider == "bedrock":
+        from backend.vision_provider.bedrock_vision import BedrockVisionProvider
+
+        return BedrockVisionProvider(
+            model_id=s.bedrock_vision_model, region=s.aws_region
+        )
     raise ValueError(f"Unknown VISION_PROVIDER: {s.vision_provider}")
 
 
@@ -46,6 +61,10 @@ def provide_ocr():
         from backend.ocr_provider.gemini_ocr import GeminiOCRProvider
 
         return GeminiOCRProvider(api_key=s.gemini_api_key, model=s.gemini_vision_model)
+    if s.ocr_provider == "bedrock":
+        from backend.ocr_provider.bedrock_ocr import BedrockOCRProvider
+
+        return BedrockOCRProvider(model_id=s.bedrock_ocr_model, region=s.aws_region)
     raise ValueError(f"Unknown OCR_PROVIDER: {s.ocr_provider}")
 
 
