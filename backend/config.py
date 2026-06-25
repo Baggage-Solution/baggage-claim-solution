@@ -38,6 +38,16 @@ class Settings(BaseSettings):
     channel_provider: str = Field(default="webhook", alias="CHANNEL_PROVIDER")
 
     # =========================================================
+    # AWS — SECRETS MANAGER  (Production — P-005)
+    # =========================================================
+    # Reuses aws_region (declared further below) — no separate
+    # secrets_manager_region field. Only consulted when
+    # SECRETS_PROVIDER=aws_sm; harmless placeholder otherwise.
+    secrets_manager_name: str = Field(
+        default="baggage-claim/local", alias="SECRETS_MANAGER_NAME"
+    )
+
+    # =========================================================
     # GEMINI  (POC — free tier)
     # =========================================================
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
@@ -111,14 +121,74 @@ class Settings(BaseSettings):
     max_claims_per_passenger: int = Field(default=3, alias="MAX_CLAIMS_PER_PASSENGER")
 
 
+# Settings field name -> Secrets Manager JSON key name. Only fields that are
+# genuinely secret (credentials) are listed here — provider switches, model
+# IDs, and thresholds always come from env/.env regardless of SECRETS_PROVIDER,
+# since they are configuration, not secrets, and belong in version-controlled
+# .env.example rather than a vaulted blob.
+#
+# This map is intentionally small today (matches the task note: "Bedrock +
+# Supabase + Meta creds all live in ONE secret JSON"). Bedrock itself needs
+# no secret (AWS credentials come from the IAM role, not from this app), so
+# only the Supabase trio is mapped for now. Meta WhatsApp credentials will be
+# added here when P-021 introduces them — same pattern, just more entries.
+_SECRET_FIELD_MAP = {
+    "supabase_url": "SUPABASE_URL",
+    "supabase_anon_key": "SUPABASE_ANON_KEY",
+    "supabase_service_role_key": "SUPABASE_SERVICE_ROLE_KEY",
+}
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Return the cached application settings singleton.
 
-    Uses lru_cache so the .env file is read only once per process.
-    Call get_settings.cache_clear() in tests to reset between cases.
+    Uses lru_cache so the .env file (and, when applicable, Secrets Manager)
+    is read only once per process. Call get_settings.cache_clear() in tests
+    to reset between cases.
+
+    When SECRETS_PROVIDER=aws_sm, this function fetches the configured
+    Secrets Manager secret and re-validates Settings with any matching
+    fields overridden by the secret's values — fields present in
+    _SECRET_FIELD_MAP but absent from this env's .env file are populated
+    from the vault instead. Fields not present in the secret JSON keep
+    their .env/default value, so a partially-populated secret degrades
+    gracefully rather than wiping out unrelated settings.
+
+    This intentionally happens AFTER the first Settings() construction so
+    that secrets_manager_name and secrets_provider themselves (needed to
+    know *which* secret to fetch) are always read from plain env vars,
+    never from the secret itself — avoiding the chicken-and-egg problem of
+    needing a secret to find out which secret to load.
 
     Returns:
-        Settings: The application settings instance.
+        Settings: The application settings instance, with AWS-sourced
+        fields populated from Secrets Manager when configured.
     """
-    return Settings()
+    settings = Settings()
+
+    if settings.secrets_provider != "aws_sm":
+        return settings
+
+    from backend.secrets_provider.aws_secrets import AWSSecretsManagerProvider
+
+    provider = AWSSecretsManagerProvider(
+        secret_name=settings.secrets_manager_name,
+        region=settings.aws_region,
+    )
+
+    overrides: dict[str, str] = {}
+    for field_name, secret_key in _SECRET_FIELD_MAP.items():
+        try:
+            overrides[field_name] = provider.get(secret_key)
+        except KeyError:
+            # Key absent from this particular secret — keep whatever
+            # value Settings() already has (env/.env/default). Logged
+            # inside AWSSecretsManagerProvider.get() already; no need
+            # to log twice here.
+            continue
+
+    if overrides:
+        settings = settings.model_copy(update=overrides)
+
+    return settings
