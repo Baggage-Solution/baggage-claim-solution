@@ -84,6 +84,16 @@ class Settings(BaseSettings):
     )
 
     # =========================================================
+    # AWS — SQS QUEUE  (Production — P-006)
+    # =========================================================
+    # Reuses aws_region above — no separate sqs_region field.
+    sqs_queue_url: str | None = Field(default=None, alias="SQS_QUEUE_URL")
+    sqs_dlq_url: str | None = Field(default=None, alias="SQS_DLQ_URL")
+    sqs_visibility_timeout_seconds: int = Field(
+        default=60, alias="SQS_VISIBILITY_TIMEOUT_SECONDS"
+    )
+
+    # =========================================================
     # AWS — BEDROCK LLM/VISION/OCR  (Production — P-003)
     # =========================================================
     # Reuses aws_region above rather than declaring a separate

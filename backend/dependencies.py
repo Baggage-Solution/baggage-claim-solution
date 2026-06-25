@@ -176,6 +176,17 @@ def provide_queue():
         from backend.queue_provider.in_memory_queue import InMemoryQueueProvider
 
         return InMemoryQueueProvider()
+    if s.queue_provider == "sqs":
+        from backend.queue_provider.sqs_queue import SQSQueueProvider
+
+        if not s.sqs_queue_url:
+            raise ValueError("SQS_QUEUE_URL must be set when QUEUE_PROVIDER=sqs")
+        return SQSQueueProvider(
+            queue_url=s.sqs_queue_url,
+            dlq_url=s.sqs_dlq_url,
+            region=s.aws_region,
+            visibility_timeout=s.sqs_visibility_timeout_seconds,
+        )
     raise ValueError(f"Unknown QUEUE_PROVIDER: {s.queue_provider}")
 
 
