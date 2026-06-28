@@ -1,0 +1,63 @@
+# ── P-010 — Production .dockerignore ─────────────────────────────────────────
+# Keeps the image small (< 500MB target) by excluding everything the
+# production process doesn't need at runtime.
+#
+# Rule: if it isn't needed by `uvicorn backend.main:app` or
+# `python -m backend.worker`, it doesn't go in the image.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Development tooling ───────────────────────────────────────────────────────
+.git
+.gitignore
+.github
+
+# ── Tests — not shipped to prod ───────────────────────────────────────────────
+tests/
+pytest.ini
+pyproject.toml
+requirements-dev.txt
+
+# ── Frontend — built separately by Vite, served via CDN/static hosting ────────
+frontend/
+
+# ── Documentation and branch management ──────────────────────────────────────
+BRANCH_DOCS/
+docs/
+*.md
+!backend/**/*.md
+
+# ── Environment files — secrets never go in the image ────────────────────────
+.env
+.env.*
+.env.example
+
+# ── Deploy artifacts — not needed at container runtime ───────────────────────
+deploy/
+
+# ── Python cache ─────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── Local data / uploads — use S3 in production ──────────────────────────────
+data/
+
+# ── IDE / OS noise ────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+
+# ── Node (not in backend, but safety net) ────────────────────────────────────
+node_modules/
+package-lock.json
+package.json

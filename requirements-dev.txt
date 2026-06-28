@@ -1,0 +1,7 @@
+# Dev/test-only dependencies
+# P-011 — moto[all] covers S3, Secrets Manager, SQS, Bedrock (partial) in a single install
+moto[all]==5.0.18
+
+# Core test runner (duplicated from requirements.txt for dev-env installs)
+pytest==8.3.3
+pytest-asyncio==0.24.0
