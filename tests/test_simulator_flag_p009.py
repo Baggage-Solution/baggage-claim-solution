@@ -61,9 +61,16 @@ def test_dashboard_route_reachable_when_simulator_disabled(monkeypatch):
     client = TestClient(app)
     # /dashboard is a frontend route — the backend doesn't 404 it because
     # the decision router and health router are always mounted.
-    # We verify the core production routes are alive.
+    # We verify the core production routes are alive by checking that the
+    # route is MOUNTED and the app did not crash — not that every external
+    # dependency (Gemini key, Supabase creds) happens to be configured in
+    # this environment. /health legitimately returns 503 when those are
+    # absent (see backend/api/routes/health.py, P-004) — that is correct
+    # behaviour for a misconfigured environment, not a route failure.
+    # Same 200-or-503 acceptance already used in test_smoke_t001_t016.py's
+    # test_t004_health_endpoint_up for the identical reason.
     response = client.get("/health")
-    assert response.status_code == 200
+    assert response.status_code in (200, 503)
 
 
 def test_webhook_route_always_reachable(monkeypatch):
