@@ -1,22 +1,37 @@
 from __future__ import annotations
 
+# ── P-007 Webhook Decoupling ──────────────────────────────────────────────────
+# Refactored to enqueue-and-return for production (QUEUE_PROVIDER=sqs).
+# Preserves the original inline-pipeline dev flow when QUEUE_PROVIDER=memory
+# so the React simulator continues to work without any changes to the frontend.
+#
+# Key invariant:
+#   - SQS path: POST /webhook returns {accepted: true, ...} within <500ms.
+#     The worker drains the queue separately (backend/worker.py — P-008).
+#   - Memory path: pipeline runs inline and returns a full WebhookResponse,
+#     exactly as before. The simulator relies on this today.
+#
+# Author: Anoushka + Devam (unified branch — P-007)
+
 import asyncio
 import hashlib
 import hmac
 import json
 import logging
 import os
+import uuid
 from typing import List, Optional
 
 from fastapi import (APIRouter, File, Form, Header, HTTPException, Request,
                      UploadFile)
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from backend.api.schemas.claim_request import WebhookRequest
 from backend.api.schemas.claim_response import WebhookResponse
 from backend.core.exceptions import AppError
-from backend.dependencies import provide_storage
+from backend.dependencies import provide_queue, provide_storage
 from backend.graph.orchestrator import ClaimOrchestrator
+from backend.queue_provider.in_memory_queue import InMemoryQueueProvider
 
 router = APIRouter(tags=["Webhook"])
 logger = logging.getLogger(__name__)
@@ -27,7 +42,7 @@ def verify_whatsapp_signature(payload: bytes, signature_header: Optional[str]) -
     """Verify the X-Hub-Signature-256 HMAC signature from WhatsApp Cloud API.
 
     Returns True (skip check) when WHATSAPP_APP_SECRET is not configured
-    so the POC simulator works without a real WhatsApp credentials.
+    so the POC simulator works without real WhatsApp credentials.
 
     Args:
         payload: Raw request body bytes used as the HMAC message.
@@ -57,17 +72,83 @@ def verify_whatsapp_signature(payload: bytes, signature_header: Optional[str]) -
     return is_valid
 
 
-@router.post("/webhook", response_model=WebhookResponse)
+def _build_job_payload(
+    payload: WebhookRequest,
+    req_id: Optional[str],
+) -> dict:
+    """Serialise a WebhookRequest into a flat dict suitable for queuing.
+
+    The worker rebuilds ClaimState from this dict. Every field that the
+    orchestrator.run() call needs must be included here — nothing can be
+    recovered from the request object once it is gone.
+
+    Args:
+        payload: Parsed WebhookRequest from the POST body.
+        req_id: request_id string injected by RequestContextMiddleware.
+
+    Returns:
+        dict: JSON-serialisable job payload.
+    """
+    return {
+        # Identity
+        "job_id": str(uuid.uuid4()),
+        "request_id": req_id,
+        "session_id": payload.session_id,
+        # Passenger turn
+        "message": payload.message,
+        "image_paths": payload.image_paths or [],
+        "conversation_history": payload.conversation_history or [],
+        "conversation_step": payload.conversation_step or "greeting",
+        # A1 echoed state
+        "conversation_ended": payload.conversation_ended or False,
+        # A2 echoed state
+        "no_damage_detected": payload.no_damage_detected or False,
+        "not_a_bag": payload.not_a_bag or False,
+        "last_object_description": payload.last_object_description,
+        "non_bag_attempts": payload.non_bag_attempts or 0,
+        "tag_in_damage_photo": payload.tag_in_damage_photo or False,
+        "tag_candidate_paths": payload.tag_candidate_paths or [],
+        "processed_damage_paths": payload.processed_damage_paths or [],
+        "damage_types": payload.damage_types or [],
+        "severity_score": payload.severity_score or 0.0,
+        "brand_detected": payload.brand_detected,
+        "is_luxury": payload.is_luxury or False,
+        "compensation_estimate_usd": payload.compensation_estimate_usd or 0.0,
+        # A3 echoed state
+        "processed_tag_paths": payload.processed_tag_paths or [],
+        "flight_number": payload.flight_number,
+        "pnr": payload.pnr,
+        "bag_id": payload.bag_id,
+        "ocr_confidence": payload.ocr_confidence or 0.0,
+        "tag_data_complete": payload.tag_data_complete or False,
+        "tag_manually_entered": payload.tag_manually_entered or False,
+        "manual_tag_text": payload.manual_tag_text,
+        "manual_flight_number": payload.manual_flight_number,
+        "manual_pnr": payload.manual_pnr,
+        "manual_bag_id": payload.manual_bag_id,
+        "offer_manual_entry": payload.offer_manual_entry or False,
+    }
+
+
+@router.post("/webhook")
 async def webhook(
     request: Request,
     payload: WebhookRequest,
     x_hub_signature_256: Optional[str] = Header(default=None),
-) -> WebhookResponse:
-    """Process one passenger turn through the full 5-agent LangGraph pipeline.
+):
+    """Handle one incoming passenger turn.
 
-    Validates the WhatsApp HMAC signature, reconstructs ClaimState from the
-    echoed request fields, invokes the agent graph, and returns the updated
-    state as a WebhookResponse for the simulator to render and echo back.
+    Production (QUEUE_PROVIDER=sqs):
+        - Validates HMAC signature.
+        - Serialises all fields into a job dict.
+        - Enqueues the job to SQS.
+        - Returns {accepted: true, claim_id, session_id} within <500ms.
+        - Meta's 20-second webhook deadline is always met.
+
+    Dev/simulator (QUEUE_PROVIDER=memory):
+        - Runs the full 5-agent LangGraph pipeline inline.
+        - Returns a full WebhookResponse so the React simulator can render
+          the reply in real time. No changes required on the frontend.
 
     Args:
         request: Raw FastAPI request (used for body bytes + request_id).
@@ -75,7 +156,8 @@ async def webhook(
         x_hub_signature_256: HMAC header from WhatsApp Cloud API (optional in POC).
 
     Returns:
-        WebhookResponse with the AI reply and all updated state fields.
+        In SQS mode: JSONResponse {accepted, session_id, job_id}.
+        In memory mode: WebhookResponse with AI reply and all state fields.
 
     Raises:
         HTTPException 403: If the HMAC signature is present but invalid.
@@ -96,6 +178,68 @@ async def webhook(
         },
     )
 
+    queue = provide_queue()
+
+    # ── DEV / SIMULATOR PATH (InMemoryQueueProvider) ─────────────────────────
+    # When the queue is the in-process deque, run the pipeline inline and return
+    # a full WebhookResponse. The React simulator depends on this synchronous
+    # round-trip — it has no polling loop. This preserves 100% backward
+    # compatibility so no frontend changes are needed until P-009 ships.
+    if isinstance(queue, InMemoryQueueProvider):
+        logger.debug("webhook_dev_mode — running pipeline inline (memory queue)")
+        return await _run_pipeline_inline(payload, req_id)
+
+    # ── PRODUCTION PATH (SQSQueueProvider) ───────────────────────────────────
+    # Serialise and enqueue. Return 200 immediately so Meta's webhook deadline
+    # (20s) is met even during peak Bedrock latency. The worker drains the queue
+    # on its own loop.
+    job = _build_job_payload(payload, req_id)
+
+    try:
+        job_id = await queue.enqueue(job)
+    except Exception as exc:
+        logger.exception(
+            "webhook_enqueue_failed",
+            extra={"session_id": payload.session_id, "error": str(exc)},
+        )
+        raise HTTPException(status_code=503, detail="Failed to enqueue job") from exc
+
+    logger.info(
+        "webhook_enqueued",
+        extra={
+            "session_id": payload.session_id,
+            "job_id": job_id,
+            "request_id": req_id,
+        },
+    )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "accepted": True,
+            "session_id": payload.session_id,
+            "job_id": job_id,
+        },
+    )
+
+
+async def _run_pipeline_inline(
+    payload: WebhookRequest,
+    req_id: Optional[str],
+) -> WebhookResponse:
+    """Run the full 5-agent pipeline inline and return a WebhookResponse.
+
+    This is the pre-P-007 code path, kept alive for the dev/simulator flow
+    (QUEUE_PROVIDER=memory). Extract into its own function so it is easy to
+    delete or stub in tests without touching the main handler.
+
+    Args:
+        payload: Parsed WebhookRequest.
+        req_id: Request ID from middleware.
+
+    Returns:
+        WebhookResponse with all state fields populated.
+    """
     try:
         state = await orchestrator.run(
             session_id=payload.session_id,
@@ -103,14 +247,11 @@ async def webhook(
             image_paths=payload.image_paths or [],
             conversation_history=payload.conversation_history or [],
             conversation_step=payload.conversation_step or "greeting",
-            # A2 echoed results
             conversation_ended=payload.conversation_ended or False,
             no_damage_detected=payload.no_damage_detected or False,
-            # Issue #1 — object gate
             not_a_bag=payload.not_a_bag or False,
             last_object_description=payload.last_object_description,
             non_bag_attempts=payload.non_bag_attempts or 0,
-            # Issue #2/#4 — tag in damage photo
             tag_in_damage_photo=payload.tag_in_damage_photo or False,
             tag_candidate_paths=payload.tag_candidate_paths or [],
             processed_damage_paths=payload.processed_damage_paths or [],
@@ -119,7 +260,6 @@ async def webhook(
             brand_detected=payload.brand_detected,
             is_luxury=payload.is_luxury or False,
             compensation_estimate_usd=payload.compensation_estimate_usd or 0.0,
-            # A3 echoed results
             processed_tag_paths=payload.processed_tag_paths or [],
             flight_number=payload.flight_number,
             pnr=payload.pnr,
@@ -127,7 +267,6 @@ async def webhook(
             ocr_confidence=payload.ocr_confidence or 0.0,
             tag_data_complete=payload.tag_data_complete or False,
             tag_manually_entered=payload.tag_manually_entered or False,
-            # Issue #3 — manual tag entry
             manual_tag_text=payload.manual_tag_text,
             manual_flight_number=payload.manual_flight_number,
             manual_pnr=payload.manual_pnr,
@@ -147,21 +286,17 @@ async def webhook(
             re_request_damage=state.re_request_damage,
             conversation_ended=state.conversation_ended,
             no_damage_detected=state.no_damage_detected,
-            # Issue #1 — object gate
             not_a_bag=state.not_a_bag,
             last_object_description=state.last_object_description,
             non_bag_attempts=state.non_bag_attempts,
-            # Issue #2/#4 — tag in damage photo
             tag_in_damage_photo=state.tag_in_damage_photo,
             tag_candidate_paths=state.tag_candidate_paths,
-            # Echo A2 results back
             processed_damage_paths=state.processed_damage_paths,
             damage_types=state.damage_types,
             severity_score=state.severity_score,
             brand_detected=state.brand_detected,
             is_luxury=state.is_luxury,
             compensation_estimate_usd=state.compensation_estimate_usd,
-            # Echo A3 results back
             processed_tag_paths=state.processed_tag_paths,
             flight_number=state.flight_number,
             pnr=state.pnr,
@@ -169,7 +304,6 @@ async def webhook(
             ocr_confidence=state.ocr_confidence,
             tag_data_complete=state.tag_data_complete,
             tag_manually_entered=state.tag_manually_entered,
-            # Issue #3 — manual tag entry
             offer_manual_entry=state.offer_manual_entry,
             error=state.error,
         )
@@ -194,8 +328,7 @@ async def upload_image(
     photo_type: str = Form(...),  # "damage" or "tag"
     file: UploadFile = File(...),
 ) -> dict:
-    """
-    Upload a damage or bag tag photo for a claim.
+    """Upload a damage or bag tag photo for a claim.
 
     The backend prefixes photo_type onto the saved filename:
         filename = f"{photo_type}_{file.filename}"
@@ -228,6 +361,9 @@ async def sse_events(session_id: str):
     The simulator polls this endpoint after submitting a turn. A5 pushes
     Lane 1 approval and voucher events through the per-session queue;
     this endpoint streams them as SSE events.
+
+    Only active when QUEUE_PROVIDER=memory (dev/simulator mode). In production
+    (SQS), the worker sends replies via ChannelProvider → WhatsApp (P-024).
 
     Args:
         session_id: Matches the session_id sent in the webhook request.

@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+# ── P-009 — Simulator feature flag added ─────────────────────────────────────
+# enable_simulator: bool field controls whether the /uploads static mount
+# and simulator-specific routes are active. Default False (safe for prod).
+# Set ENABLE_SIMULATOR=true locally or in the dev ECS task definition.
+# The flag is read by main.py at startup — no hot-reload on change.
+#
+# Author: Anoushka (unified branch — P-009)
+
 from functools import lru_cache
 
 from pydantic import Field
@@ -26,6 +34,16 @@ class Settings(BaseSettings):
     log_format: str = Field(default="json", alias="LOG_FORMAT")
 
     # =========================================================
+    # FEATURE FLAGS — P-009
+    # =========================================================
+    # enable_simulator: when True, backend/main.py mounts /uploads and
+    # any simulator-specific routes. When False (production default),
+    # these are skipped so the prod container has no simulator surface.
+    # /dashboard and all claim routes are ALWAYS mounted regardless of
+    # this flag — airline ops staff depend on them in production.
+    enable_simulator: bool = Field(default=False, alias="ENABLE_SIMULATOR")
+
+    # =========================================================
     # PROVIDER SWITCHES  (swap without touching agent code)
     # =========================================================
     llm_provider: str = Field(default="gemini", alias="LLM_PROVIDER")
@@ -40,9 +58,6 @@ class Settings(BaseSettings):
     # =========================================================
     # AWS — SECRETS MANAGER  (Production — P-005)
     # =========================================================
-    # Reuses aws_region (declared further below) — no separate
-    # secrets_manager_region field. Only consulted when
-    # SECRETS_PROVIDER=aws_sm; harmless placeholder otherwise.
     secrets_manager_name: str = Field(
         default="baggage-claim/local", alias="SECRETS_MANAGER_NAME"
     )
@@ -86,7 +101,6 @@ class Settings(BaseSettings):
     # =========================================================
     # AWS — SQS QUEUE  (Production — P-006)
     # =========================================================
-    # Reuses aws_region above — no separate sqs_region field.
     sqs_queue_url: str | None = Field(default=None, alias="SQS_QUEUE_URL")
     sqs_dlq_url: str | None = Field(default=None, alias="SQS_DLQ_URL")
     sqs_visibility_timeout_seconds: int = Field(
@@ -96,15 +110,6 @@ class Settings(BaseSettings):
     # =========================================================
     # AWS — BEDROCK LLM/VISION/OCR  (Production — P-003)
     # =========================================================
-    # Reuses aws_region above rather than declaring a separate
-    # bedrock_region — one AWS region setting shared across all AWS
-    # providers (S3, Bedrock, and future SQS/Secrets Manager).
-    #
-    # Default model: Claude Haiku 4.5 (anthropic.claude-haiku-4-5-20251001-v1:0)
-    # — chosen over Sonnet 4 for cost; Haiku 4.5 supports vision, so the same
-    # model ID is used for LLM, vision, and OCR. To use cross-region inference
-    # (higher throughput within a geography), prefix with a region code, e.g.
-    # "us.anthropic.claude-haiku-4-5-20251001-v1:0".
     bedrock_llm_model: str = Field(
         default="anthropic.claude-haiku-4-5-20251001-v1:0", alias="BEDROCK_LLM_MODEL"
     )
@@ -131,17 +136,6 @@ class Settings(BaseSettings):
     max_claims_per_passenger: int = Field(default=3, alias="MAX_CLAIMS_PER_PASSENGER")
 
 
-# Settings field name -> Secrets Manager JSON key name. Only fields that are
-# genuinely secret (credentials) are listed here — provider switches, model
-# IDs, and thresholds always come from env/.env regardless of SECRETS_PROVIDER,
-# since they are configuration, not secrets, and belong in version-controlled
-# .env.example rather than a vaulted blob.
-#
-# This map is intentionally small today (matches the task note: "Bedrock +
-# Supabase + Meta creds all live in ONE secret JSON"). Bedrock itself needs
-# no secret (AWS credentials come from the IAM role, not from this app), so
-# only the Supabase trio is mapped for now. Meta WhatsApp credentials will be
-# added here when P-021 introduces them — same pattern, just more entries.
 _SECRET_FIELD_MAP = {
     "supabase_url": "SUPABASE_URL",
     "supabase_anon_key": "SUPABASE_ANON_KEY",
@@ -159,21 +153,10 @@ def get_settings() -> Settings:
 
     When SECRETS_PROVIDER=aws_sm, this function fetches the configured
     Secrets Manager secret and re-validates Settings with any matching
-    fields overridden by the secret's values — fields present in
-    _SECRET_FIELD_MAP but absent from this env's .env file are populated
-    from the vault instead. Fields not present in the secret JSON keep
-    their .env/default value, so a partially-populated secret degrades
-    gracefully rather than wiping out unrelated settings.
-
-    This intentionally happens AFTER the first Settings() construction so
-    that secrets_manager_name and secrets_provider themselves (needed to
-    know *which* secret to fetch) are always read from plain env vars,
-    never from the secret itself — avoiding the chicken-and-egg problem of
-    needing a secret to find out which secret to load.
+    fields overridden by the secret's values.
 
     Returns:
-        Settings: The application settings instance, with AWS-sourced
-        fields populated from Secrets Manager when configured.
+        Settings: The application settings instance.
     """
     settings = Settings()
 
@@ -192,10 +175,6 @@ def get_settings() -> Settings:
         try:
             overrides[field_name] = provider.get(secret_key)
         except KeyError:
-            # Key absent from this particular secret — keep whatever
-            # value Settings() already has (env/.env/default). Logged
-            # inside AWSSecretsManagerProvider.get() already; no need
-            # to log twice here.
             continue
 
     if overrides:

@@ -1,0 +1,73 @@
+{
+  "comment": "ECS Task Definition — baggage-claim API service (P-010). IMAGE_URI is replaced by GitHub Actions (P-014) on every deploy.",
+  "family": "baggage-claim-api",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "<EXEC_ROLE_ARN>",
+  "taskRoleArn": "<TASK_ROLE_ARN>",
+  "containerDefinitions": [
+    {
+      "name": "baggage-claim-api",
+      "image": "<IMAGE_URI>",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "command": [],
+      "environment": [
+        { "name": "APP_ENV",             "value": "production" },
+        { "name": "ENVIRONMENT",         "value": "production" },
+        { "name": "LOG_FORMAT",          "value": "json" },
+        { "name": "LLM_PROVIDER",        "value": "bedrock" },
+        { "name": "VISION_PROVIDER",     "value": "bedrock" },
+        { "name": "OCR_PROVIDER",        "value": "bedrock" },
+        { "name": "STORAGE_PROVIDER",    "value": "s3" },
+        { "name": "QUEUE_PROVIDER",      "value": "sqs" },
+        { "name": "SECRETS_PROVIDER",    "value": "aws_sm" },
+        { "name": "CHANNEL_PROVIDER",    "value": "whatsapp" },
+        { "name": "ENABLE_SIMULATOR",    "value": "false" },
+        { "name": "AWS_REGION",          "value": "us-east-1" },
+        { "name": "S3_BUCKET",           "value": "abc-baggage-claims-prod" },
+        { "name": "SECRETS_MANAGER_NAME","value": "baggage-claim/prod" },
+        { "name": "BEDROCK_LLM_MODEL",   "value": "anthropic.claude-haiku-4-5-20251001-v1:0" },
+        { "name": "BEDROCK_VISION_MODEL","value": "anthropic.claude-haiku-4-5-20251001-v1:0" },
+        { "name": "BEDROCK_OCR_MODEL",   "value": "anthropic.claude-haiku-4-5-20251001-v1:0" }
+      ],
+      "secrets": [
+        {
+          "name": "SQS_QUEUE_URL",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:baggage-claim/prod:SQS_QUEUE_URL::"
+        },
+        {
+          "name": "SQS_DLQ_URL",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:<ACCOUNT_ID>:secret:baggage-claim/prod:SQS_DLQ_URL::"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/baggage-claim",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "api"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"],
+        "interval": 30,
+        "timeout": 10,
+        "retries": 3,
+        "startPeriod": 15
+      }
+    }
+  ],
+  "tags": [
+    { "key": "Project", "value": "baggage-claim" },
+    { "key": "Env",     "value": "prod" },
+    { "key": "Owner",   "value": "emerging-markets" }
+  ]
+}
