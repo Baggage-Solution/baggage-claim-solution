@@ -1,0 +1,123 @@
+# ── ABC Airline Baggage Claim AI — CI/CD Deploy Pipeline (P-014) ────────────
+#
+# Triggers on push to develop-aws + main.
+# Builds ONE image (Dockerfile is shared by API + worker — command override
+# picks the entrypoint at the ECS task-definition level, see P-010/P-017).
+#
+# Two deploy jobs, same image, different ECS services:
+#   deploy-api    → cluster: baggage-claim-cluster, service: baggage-api
+#   deploy-worker → cluster: baggage-claim-cluster, service: baggage-worker
+#
+# 🚫 No local Docker builds — this workflow is the ONLY image builder (P-010 rule).
+# Until P-016/P-017 provision the ECR repo + ECS services (blocked on the
+# admin ticket, P-013), the ecs-deploy steps will fail — that's expected.
+# Author: Anoushka Vyas
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - develop-aws
+      - main
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: abc-baggage-claim
+  ECS_CLUSTER: baggage-claim-cluster
+
+jobs:
+  build-and-push:
+    name: Build & Push Image to ECR
+    runs-on: ubuntu-latest
+    outputs:
+      image_uri: ${{ steps.build-image.outputs.image_uri }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+  deploy-api:
+    name: Deploy — baggage-api
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Render API task definition
+        id: render-api-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: deploy/taskdef-api.json
+          container-name: baggage-claim-api
+          image: ${{ needs.build-and-push.outputs.image_uri }}
+
+      - name: Deploy API task definition to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-api-task-def.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: baggage-api
+          wait-for-service-stability: true
+
+  deploy-worker:
+    name: Deploy — baggage-worker
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Render worker task definition
+        id: render-worker-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: deploy/taskdef-worker.json
+          container-name: baggage-claim-worker
+          image: ${{ needs.build-and-push.outputs.image_uri }}
+
+      - name: Deploy worker task definition to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-worker-task-def.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: baggage-worker
+          wait-for-service-stability: true
